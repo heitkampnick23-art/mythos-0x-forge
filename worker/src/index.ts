@@ -17,7 +17,11 @@ interface Env {
   MEDIA: R2Bucket;
   ALLOWED_ORIGIN: string;
   ENABLE_MOCK_FALLBACK: string;
-  REALITY_DEFENDER_API_KEY?: string;
+  // Detection: Sightengine (self-serve). When both creds are set we hit the
+  // real `genai` model; otherwise we degrade to the deterministic mock.
+  SIGHTENGINE_USER?: string;
+  SIGHTENGINE_SECRET?: string;
+  // Narration: Anthropic Claude Haiku
   ANTHROPIC_API_KEY?: string;
 }
 
@@ -103,9 +107,17 @@ async function analyze(req: Request, env: Env, cors: HeadersInit): Promise<Respo
   });
 
   // Real detection if keyed; otherwise deterministic mock identical to v1 client.
+  // Provider failures fall back to the mock so we never serve 5xx during an
+  // upstream outage — confidence in `modelTag` lets the UI show provenance.
   let result: AnalysisResult;
-  if (env.REALITY_DEFENDER_API_KEY) {
-    result = await detectWithRealityDefender(file, kind, env);
+  if (env.SIGHTENGINE_USER && env.SIGHTENGINE_SECRET) {
+    try {
+      result = await detectWithSightengine(file, kind, env);
+    } catch (e) {
+      console.error('sightengine_failed', (e as Error).message);
+      if (env.ENABLE_MOCK_FALLBACK === 'true') result = await mockAnalyze(file, kind);
+      else throw e;
+    }
   } else if (env.ENABLE_MOCK_FALLBACK === 'true') {
     result = await mockAnalyze(file, kind);
   } else {
@@ -127,99 +139,104 @@ async function analyze(req: Request, env: Env, cors: HeadersInit): Promise<Respo
 
 // -- detection (real) ---------------------------------------------------------
 
-async function detectWithRealityDefender(
+/**
+ * Sightengine — self-serve AI detection. Uses the `genai` model for images
+ * (and `deepfake` if the user later upgrades). Image flow is sync. Video flow
+ * uses the sync video endpoint with frame-sampling.
+ *
+ * Docs: https://sightengine.com/docs/ai-generated-image-detection
+ *       https://sightengine.com/docs/synchronous-video-content-moderation
+ */
+async function detectWithSightengine(
   file: File,
   kind: MediaKind,
   env: Env,
 ): Promise<AnalysisResult> {
-  // Reality Defender public API: upload → poll. The exact endpoint shape can
-  // shift between RD plan tiers, so we keep it isolated here. To switch
-  // providers (Hive, Sensity), replace this function.
-  const upload = await fetch('https://api.realitydefender.ai/api/files/aws-presigned', {
-    method: 'POST',
-    headers: {
-      'X-API-KEY': env.REALITY_DEFENDER_API_KEY!,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({ fileName: file.name }),
-  });
-  if (!upload.ok) throw new Error(`RD presign failed: ${upload.status}`);
-  const presign = (await upload.json()) as {
-    requestId: string;
-    response: { signedUrl: string };
-  };
+  const endpoint =
+    kind === 'image'
+      ? 'https://api.sightengine.com/1.0/check.json'
+      : 'https://api.sightengine.com/1.0/video/check-sync.json';
 
-  // PUT the file bytes
-  const put = await fetch(presign.response.signedUrl, {
-    method: 'PUT',
-    headers: { 'Content-Type': file.type },
-    body: file.stream(),
-  });
-  if (!put.ok) throw new Error(`RD upload failed: ${put.status}`);
+  const form = new FormData();
+  form.append('media', file, file.name);
+  form.append('models', 'genai');
+  form.append('api_user', env.SIGHTENGINE_USER!);
+  form.append('api_secret', env.SIGHTENGINE_SECRET!);
 
-  // Poll for verdict
-  const deadline = Date.now() + 60_000;
-  while (Date.now() < deadline) {
-    const r = await fetch(
-      `https://api.realitydefender.ai/api/media/users/${presign.requestId}`,
-      { headers: { 'X-API-KEY': env.REALITY_DEFENDER_API_KEY! } },
-    );
-    if (r.ok) {
-      const data = (await r.json()) as RDResult;
-      if (data.status && data.status !== 'PROCESSING') {
-        return mapRealityDefenderResult(data, kind);
-      }
-    }
-    await sleep(1500);
+  const r = await fetch(endpoint, { method: 'POST', body: form });
+  if (!r.ok) {
+    const text = await r.text().catch(() => '');
+    throw new Error(`sightengine ${r.status}: ${text.slice(0, 200)}`);
   }
-  throw new Error('RD timeout');
+  const data = (await r.json()) as SightengineResult;
+  if (data.status !== 'success') {
+    throw new Error(`sightengine_status: ${data.error?.message ?? data.status}`);
+  }
+
+  return mapSightengineResult(data, kind);
 }
 
-interface RDResult {
-  status?: string;
-  resultsSummary?: { status?: string; metadata?: { finalScore?: number } };
-  models?: Array<{ name: string; status: string; finalScore?: number }>;
+interface SightengineResult {
+  status: string;
+  error?: { message?: string; code?: number };
+  type?: { ai_generated?: number };
+  data?: { frames?: Array<{ position?: number; type?: { ai_generated?: number } }> };
 }
 
-function mapRealityDefenderResult(data: RDResult, kind: MediaKind): AnalysisResult {
-  const score =
-    data.resultsSummary?.metadata?.finalScore ?? averageModelScore(data.models) ?? 0;
-  const confidence = Math.max(0, Math.min(1, score / 100));
-  const findings: Finding[] = (data.models ?? [])
-    .filter((m) => typeof m.finalScore === 'number')
-    .slice(0, 5)
-    .map((m) => ({
-      category: categorize(m.name),
-      title: m.name,
-      detail: `Model ${m.name} returned a confidence of ${m.finalScore}%.`,
-      weight: (m.finalScore ?? 0) / 100,
-    }));
+function mapSightengineResult(data: SightengineResult, kind: MediaKind): AnalysisResult {
+  // Image: top-level type.ai_generated is 0..1
+  // Video: average across frames, also keep peak for finding detail
+  let confidence = 0;
+  let peak = 0;
+  let frameCount = 0;
+  if (kind === 'image') {
+    confidence = data.type?.ai_generated ?? 0;
+    peak = confidence;
+    frameCount = 1;
+  } else {
+    const frames = data.data?.frames ?? [];
+    frameCount = frames.length;
+    if (frames.length > 0) {
+      const scores = frames.map((f) => f.type?.ai_generated ?? 0);
+      confidence = scores.reduce((s, v) => s + v, 0) / scores.length;
+      peak = Math.max(...scores);
+    }
+  }
+
+  const verdict: AnalysisResult['verdict'] =
+    confidence < 0.4 ? 'authentic' : confidence < 0.7 ? 'suspect' : 'synthetic';
+
+  // Sightengine genai returns a single score. Synthesize 1-2 findings from it
+  // so the UI's breakdown panel has substance; the narration pass (Anthropic)
+  // can rewrite these into more compelling forensic prose downstream.
+  const findings: Finding[] = [
+    {
+      category: 'frequency',
+      title: 'Generative diffusion signature',
+      detail: `Sightengine genai model returned ${(confidence * 100).toFixed(1)}% AI-generation probability${
+        kind === 'video' ? ` (averaged across ${frameCount} sampled frames; peak ${(peak * 100).toFixed(1)}%)` : ''
+      }.`,
+      weight: confidence,
+    },
+  ];
+  if (kind === 'video' && peak > confidence + 0.15) {
+    findings.push({
+      category: 'motion',
+      title: 'Inconsistent frame-level scoring',
+      detail: `Per-frame variance is high (peak ${(peak * 100).toFixed(1)}% vs mean ${(confidence * 100).toFixed(1)}%) — segments of the video score significantly more synthetic than others.`,
+      weight: Math.min(1, peak - confidence + 0.5),
+    });
+  }
 
   return {
     kind,
     confidence,
-    verdict: confidence < 0.4 ? 'authentic' : confidence < 0.7 ? 'suspect' : 'synthetic',
-    modelTag: 'reality-defender/v1',
+    verdict,
+    modelTag: 'sightengine/genai',
     durationMs: 0,
-    boxes: [], // RD doesn't return boxes in basic API; UI overlay degrades gracefully
+    boxes: [], // Sightengine genai doesn't return spatial boxes; UI overlay no-ops.
     findings,
   };
-}
-
-function averageModelScore(models?: RDResult['models']): number | undefined {
-  if (!models || models.length === 0) return undefined;
-  const scored = models.filter((m) => typeof m.finalScore === 'number');
-  if (scored.length === 0) return undefined;
-  return scored.reduce((s, m) => s + (m.finalScore ?? 0), 0) / scored.length;
-}
-
-function categorize(name: string): Finding['category'] {
-  const n = name.toLowerCase();
-  if (n.includes('face')) return 'geometry';
-  if (n.includes('audio') || n.includes('voice')) return 'frequency';
-  if (n.includes('compression') || n.includes('jpeg')) return 'compression';
-  if (n.includes('motion') || n.includes('temporal')) return 'motion';
-  return 'texture';
 }
 
 // -- detection (mock fallback) ------------------------------------------------
