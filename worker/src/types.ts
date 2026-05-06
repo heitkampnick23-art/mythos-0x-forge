@@ -16,6 +16,10 @@ export interface Env {
   STRIPE_SECRET_KEY?: string;
   STRIPE_WEBHOOK_SECRET?: string;
   RESEND_API_KEY?: string;
+  /** Override the from address; defaults to onboarding@resend.dev until
+   *  mythos0x.com is verified in Resend. Set to "Mythos 0X Forge <auth@mythos0x.com>"
+   *  via wrangler secret put RESEND_FROM once verified. */
+  RESEND_FROM?: string;
 }
 
 export type Tier = 'free' | 'pro' | 'max';

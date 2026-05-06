@@ -258,20 +258,25 @@ async function sendMagicLink(req: Request, env: Env, cors: HeadersInit): Promise
   const verifyUrl = `https://api.mythos0x.com/v1/auth/verify?token=${token}`;
 
   if (env.RESEND_API_KEY) {
-    await fetch('https://api.resend.com/emails', {
+    const from = env.RESEND_FROM ?? 'Mythos 0X Forge <onboarding@resend.dev>';
+    const r = await fetch('https://api.resend.com/emails', {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${env.RESEND_API_KEY}`,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        from: 'Mythos 0X Forge <auth@mythos0x.com>',
+        from,
         to: [email],
         subject: 'Sign in to Mythos 0X Forge',
-        html: `<p>Click to sign in (expires in 15 minutes):</p><p><a href="${verifyUrl}">Sign in</a></p>`,
+        html: `<div style="font-family:system-ui,sans-serif;max-width:480px;margin:0 auto;padding:32px;background:#0a0608;color:#fff;border-radius:12px"><h1 style="background:linear-gradient(180deg,#ffe6c4,#ffb347 50%,#c81d25);-webkit-background-clip:text;background-clip:text;color:transparent;font-size:32px;margin:0 0 12px">Mythos 0X Forge</h1><p style="color:#aaa;margin:0 0 24px">Forensic AI Authentication</p><p style="margin:0 0 16px">Click to enter the Forge:</p><p style="margin:24px 0"><a href="${verifyUrl}" style="display:inline-block;padding:14px 28px;background:linear-gradient(90deg,#ff5722,#c81d25);color:#fff;text-decoration:none;border-radius:999px;font-weight:600;letter-spacing:0.05em">Sign In</a></p><p style="color:#666;font-size:12px;margin:32px 0 0">Link expires in 15 minutes. If you didn't request this, ignore this email.</p></div>`,
         text: `Sign in to Mythos 0X Forge: ${verifyUrl}\n(expires in 15 minutes)`,
       }),
-    }).catch((e) => console.error('resend_failed', (e as Error).message));
+    });
+    if (!r.ok) {
+      const detail = await r.text().catch(() => '');
+      console.error('resend_failed', r.status, detail.slice(0, 300));
+    }
   } else {
     console.log('magic-link (no Resend configured):', verifyUrl);
   }
