@@ -7,15 +7,20 @@ import { ToastStack, type ToastMessage } from './components/Toast';
 import { AuthBar } from './components/AuthBar';
 import { Pricing } from './components/Pricing';
 import { Account } from './components/Account';
+import { History } from './components/History';
+import { Footer } from './components/Footer';
+import { Terms } from './components/legal/Terms';
+import { Privacy } from './components/legal/Privacy';
+import { AUP } from './components/legal/AUP';
 import { useAuth } from './hooks/useAuth';
 
-type Route = '/' | '/pricing' | '/account';
+type Route = '/' | '/pricing' | '/account' | '/history' | '/terms' | '/privacy' | '/aup';
+
+const ROUTES: Route[] = ['/', '/pricing', '/account', '/history', '/terms', '/privacy', '/aup'];
 
 function currentRoute(): Route {
-  const p = window.location.pathname;
-  if (p === '/pricing') return '/pricing';
-  if (p === '/account') return '/account';
-  return '/';
+  const p = window.location.pathname as Route;
+  return ROUTES.includes(p) ? p : '/';
 }
 
 export default function App() {
@@ -117,12 +122,14 @@ export default function App() {
       {route === '/account' && (
         <Account me={me} onRefresh={refresh} onNavigate={navigate} />
       )}
+      {route === '/history' && <History me={me} onNavigate={navigate} />}
+      {route === '/terms' && <Terms onBack={() => navigate('/')} />}
+      {route === '/privacy' && <Privacy onBack={() => navigate('/')} />}
+      {route === '/aup' && <AUP onBack={() => navigate('/')} />}
 
       <ToastStack toasts={toasts} onDismiss={dismissToast} />
 
-      <footer className="relative z-10 px-6 pb-28 pt-4 text-center font-mono text-[10px] uppercase tracking-[0.32em] text-white/25">
-        Mythos · 0X · Forge — v0.2 sightengine + claude haiku
-      </footer>
+      <Footer onNavigate={navigate} authenticated={!!me?.authenticated} />
     </div>
   );
 }

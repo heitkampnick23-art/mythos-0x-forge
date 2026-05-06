@@ -62,6 +62,21 @@ export async function logout(): Promise<void> {
   await api<{ ok: true }>('/v1/auth/logout', { method: 'POST' });
 }
 
+export interface AnalysisRow {
+  id: string;
+  kind: 'image' | 'video';
+  confidence: number;
+  verdict: 'authentic' | 'suspect' | 'synthetic';
+  model_tag: string;
+  duration_ms: number;
+  created_at: number;
+}
+
+export async function listAnalyses(): Promise<AnalysisRow[]> {
+  const r = await api<{ analyses: AnalysisRow[] }>('/v1/analyses');
+  return r.analyses;
+}
+
 // Pricing — kept in sync with Worker's wrangler.toml vars
 export const PRICES = {
   pro: {

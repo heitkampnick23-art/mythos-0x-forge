@@ -57,6 +57,8 @@ export default {
       // Auth & app routes
       if (url.pathname === '/v1/health') return json({ ok: true, ts: Date.now() }, cors);
       if (url.pathname === '/v1/me') return await whoami(req, env, cors);
+      if (url.pathname === '/v1/analyses' && req.method === 'GET')
+        return await listAnalyses(req, env, cors);
       if (url.pathname === '/v1/analyze' && req.method === 'POST')
         return await analyze(req, env, cors);
 
@@ -188,6 +190,27 @@ async function analyze(req: Request, env: Env, cors: HeadersInit): Promise<Respo
     },
     cors,
   );
+}
+
+async function listAnalyses(req: Request, env: Env, cors: HeadersInit): Promise<Response> {
+  const token = readSessionCookie(req);
+  const user = token ? await lookupSession(env, token) : null;
+  if (!user) return json({ error: 'auth_required' }, cors, 401);
+  const rows = await env.DB.prepare(
+    `SELECT id, kind, confidence, verdict, model_tag, duration_ms, created_at
+     FROM analyses WHERE user_id = ? ORDER BY created_at DESC LIMIT 50`,
+  )
+    .bind(user.id)
+    .all<{
+      id: string;
+      kind: string;
+      confidence: number;
+      verdict: string;
+      model_tag: string;
+      duration_ms: number;
+      created_at: number;
+    }>();
+  return json({ analyses: rows.results ?? [] }, cors);
 }
 
 async function currentUsage(env: Env, identity: string, day: string): Promise<number> {
