@@ -1,0 +1,106 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+  --ember-gold: #ffb347;
+  --ember-fire: #ff5722;
+  --ember-blood: #c81d25;
+  --ember-violet: #6b2fb3;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  width: 100%;
+}
+
+body {
+  font-family: 'Inter', system-ui, sans-serif;
+  background:
+    radial-gradient(1200px 700px at 75% 10%, rgba(255, 87, 34, 0.06), transparent 60%),
+    radial-gradient(900px 600px at 15% 90%, rgba(200, 29, 37, 0.05), transparent 60%),
+    radial-gradient(1400px 900px at 50% 50%, #0a0608 0%, #050507 70%);
+  background-attachment: fixed;
+  overflow-x: hidden;
+}
+
+/* Subtle film grain to keep the dark from feeling flat */
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0.035;
+  z-index: 1;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='120' height='120'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/></filter><rect width='100%' height='100%' filter='url(%23n)' opacity='0.7'/></svg>");
+  mix-blend-mode: overlay;
+}
+
+@layer components {
+  .glass {
+    @apply relative rounded-2xl border border-white/[0.06] bg-white/[0.03] backdrop-blur-2xl shadow-glass;
+  }
+  .glass-hot {
+    @apply relative rounded-2xl border border-ember-fire/30 bg-gradient-to-br from-ember-fire/[0.08] to-ember-blood/[0.04] backdrop-blur-2xl shadow-glass-hot;
+  }
+  .glass-edge {
+    /* very thin top highlight */
+    position: relative;
+  }
+  .glass-edge::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    padding: 1px;
+    background: linear-gradient(
+      135deg,
+      rgba(255, 180, 71, 0.35),
+      rgba(255, 87, 34, 0.12) 35%,
+      rgba(255, 255, 255, 0.04) 60%,
+      rgba(107, 47, 179, 0.18)
+    );
+    -webkit-mask:
+      linear-gradient(#000 0 0) content-box,
+      linear-gradient(#000 0 0);
+    -webkit-mask-composite: xor;
+    mask-composite: exclude;
+    pointer-events: none;
+  }
+  .text-glow {
+    text-shadow:
+      0 0 24px rgba(255, 122, 31, 0.4),
+      0 0 48px rgba(200, 29, 37, 0.25);
+  }
+  .wordmark {
+    font-family: 'Space Grotesk', system-ui, sans-serif;
+    font-weight: 600;
+    letter-spacing: -0.02em;
+    background: linear-gradient(180deg, #ffe6c4 0%, #ffb347 50%, #c81d25 100%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+}
+
+/* Reduced motion: tame the embers + transitions globally */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* Custom scrollbar so the dark stays unbroken */
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: linear-gradient(180deg, rgba(255, 87, 34, 0.35), rgba(200, 29, 37, 0.25));
+  border-radius: 8px;
+}
