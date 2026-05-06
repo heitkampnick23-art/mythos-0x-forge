@@ -73,8 +73,25 @@ export async function analyzeMedia(
     const res = await fetch(`${API_BASE}/v1/analyze`, {
       method: 'POST',
       body: form,
+      credentials: 'include',
       signal: opts.signal,
     });
+
+    if (res.status === 402) {
+      const data = (await res.json()) as {
+        tier: string;
+        used: number;
+        limit: number;
+        upgrade_url: string;
+      };
+      throw Object.assign(new Error('rate_limited'), {
+        rateLimited: true,
+        tier: data.tier,
+        used: data.used,
+        limit: data.limit,
+        upgradeUrl: data.upgrade_url,
+      });
+    }
 
     if (!res.ok) {
       const detail = await res.text().catch(() => '');
@@ -89,4 +106,16 @@ export async function analyzeMedia(
     cancelled = true;
     throw err;
   }
+}
+
+export interface RateLimitedError extends Error {
+  rateLimited: true;
+  tier: string;
+  used: number;
+  limit: number;
+  upgradeUrl: string;
+}
+
+export function isRateLimited(err: unknown): err is RateLimitedError {
+  return Boolean((err as { rateLimited?: boolean })?.rateLimited);
 }

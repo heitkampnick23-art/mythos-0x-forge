@@ -1,15 +1,36 @@
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Hero } from './components/Hero';
 import { CommandBar } from './components/CommandBar';
 import { ForgeEye, type ForgeEyeHandle, type ForgeState } from './components/ForgeEye';
 import { EmberField, type EmberMode } from './components/EmberField';
 import { ToastStack, type ToastMessage } from './components/Toast';
+import { AuthBar } from './components/AuthBar';
+import { Pricing } from './components/Pricing';
+import { Account } from './components/Account';
+import { useAuth } from './hooks/useAuth';
+
+type Route = '/' | '/pricing' | '/account';
+
+function currentRoute(): Route {
+  const p = window.location.pathname;
+  if (p === '/pricing') return '/pricing';
+  if (p === '/account') return '/account';
+  return '/';
+}
 
 export default function App() {
+  const [route, setRoute] = useState<Route>(currentRoute);
   const [state, setState] = useState<ForgeState>({ kind: 'idle' });
   const [emberMode, setEmberMode] = useState<EmberMode>('idle');
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
   const forgeRef = useRef<ForgeEyeHandle>(null);
+  const { me, refresh } = useAuth();
+
+  useEffect(() => {
+    const onPop = () => setRoute(currentRoute());
+    window.addEventListener('popstate', onPop);
+    return () => window.removeEventListener('popstate', onPop);
+  }, []);
 
   const pushToast = useCallback((text: string, tone: ToastMessage['tone'] = 'error') => {
     setToasts((t) => [...t, { id: Date.now() + Math.random(), text, tone }]);
@@ -17,6 +38,33 @@ export default function App() {
 
   const dismissToast = useCallback((id: number) => {
     setToasts((t) => t.filter((x) => x.id !== id));
+  }, []);
+
+  const navigate = useCallback((path: Route) => {
+    window.history.pushState(null, '', path);
+    setRoute(path);
+    window.scrollTo({ top: 0 });
+  }, []);
+
+  // Acknowledge auth + checkout query params on landing
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('auth') === 'ok') {
+      pushToast('Signed in.', 'info');
+      void refresh();
+      cleanQuery();
+    } else if (params.get('auth') === 'expired') {
+      pushToast('That sign-in link expired. Try again.', 'error');
+      cleanQuery();
+    } else if (params.get('checkout') === 'success') {
+      pushToast('Payment received. Welcome to the Forge.', 'info');
+      void refresh();
+      cleanQuery();
+    } else if (params.get('checkout') === 'cancel') {
+      pushToast('Checkout cancelled.', 'info');
+      cleanQuery();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const onCommand = useCallback(
@@ -38,28 +86,47 @@ export default function App() {
 
   return (
     <div className="relative min-h-screen w-full">
-      {/* Background ember field, pinned to viewport */}
       <div className="pointer-events-none fixed inset-0 z-0">
         <EmberField mode={emberMode} />
       </div>
 
-      <Hero visibility={heroVis} />
+      <AuthBar me={me} onRefresh={refresh} onNavigate={navigate} />
 
-      <ForgeEye
-        ref={forgeRef}
-        state={state}
-        setState={setState}
-        onError={(msg) => pushToast(msg, 'error')}
-        onModeChange={setEmberMode}
-      />
+      {route === '/' && (
+        <>
+          <Hero visibility={heroVis} />
+          <ForgeEye
+            ref={forgeRef}
+            state={state}
+            setState={setState}
+            onError={(msg) => pushToast(msg, 'error')}
+            onModeChange={setEmberMode}
+            onPaywall={(detail) => {
+              pushToast(
+                `${detail.tier === 'free' ? 'Free' : detail.tier} tier limit reached (${detail.used}/${detail.limit}). Upgrade for more.`,
+                'error',
+              );
+              setTimeout(() => navigate('/pricing'), 800);
+            }}
+          />
+          <CommandBar onCommand={onCommand} />
+        </>
+      )}
 
-      <CommandBar onCommand={onCommand} />
+      {route === '/pricing' && <Pricing me={me} onNavigate={navigate} />}
+      {route === '/account' && (
+        <Account me={me} onRefresh={refresh} onNavigate={navigate} />
+      )}
 
       <ToastStack toasts={toasts} onDismiss={dismissToast} />
 
       <footer className="relative z-10 px-6 pb-28 pt-4 text-center font-mono text-[10px] uppercase tracking-[0.32em] text-white/25">
-        Mythos · 0X · Forge — v0.1 simulated cortex
+        Mythos · 0X · Forge — v0.2 sightengine + claude haiku
       </footer>
     </div>
   );
+}
+
+function cleanQuery() {
+  window.history.replaceState(null, '', window.location.pathname);
 }

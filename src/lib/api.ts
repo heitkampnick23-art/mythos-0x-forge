@@ -1,0 +1,75 @@
+// Typed Worker client. All requests are credentialed (cookie-based session).
+const API_BASE =
+  (import.meta.env.VITE_FORGE_API_URL as string | undefined) ?? 'https://api.mythos0x.com';
+
+export type Tier = 'free' | 'pro' | 'max';
+
+export interface Limits {
+  free: number;
+  pro: number;
+  max: number;
+}
+
+export interface MeResponse {
+  authenticated: boolean;
+  user?: { id: string; email: string; tier: Tier; hasStripe: boolean };
+  tier?: Tier;
+  limits: Limits;
+}
+
+async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
+  const res = await fetch(`${API_BASE}${path}`, {
+    credentials: 'include',
+    ...init,
+    headers: { 'content-type': 'application/json', ...(init.headers ?? {}) },
+  });
+  if (!res.ok) {
+    const detail = await res.text().catch(() => '');
+    throw Object.assign(new Error(`api ${res.status}: ${detail.slice(0, 200)}`), {
+      status: res.status,
+      detail,
+    });
+  }
+  return res.json() as Promise<T>;
+}
+
+export const fetchMe = (): Promise<MeResponse> => api<MeResponse>('/v1/me');
+
+export async function startCheckout(price_id: string, email?: string): Promise<string> {
+  const r = await api<{ url: string }>('/v1/checkout', {
+    method: 'POST',
+    body: JSON.stringify({ price_id, email }),
+  });
+  return r.url;
+}
+
+export async function openBillingPortal(): Promise<string> {
+  const r = await api<{ url: string }>('/v1/portal', {
+    method: 'POST',
+    body: JSON.stringify({ return_url: `${window.location.origin}/account` }),
+  });
+  return r.url;
+}
+
+export async function sendMagicLink(email: string): Promise<void> {
+  await api<{ ok: true }>('/v1/auth/magic-link', {
+    method: 'POST',
+    body: JSON.stringify({ email }),
+  });
+}
+
+export async function logout(): Promise<void> {
+  await api<{ ok: true }>('/v1/auth/logout', { method: 'POST' });
+}
+
+// Pricing — kept in sync with Worker's wrangler.toml vars
+export const PRICES = {
+  pro: {
+    monthly: { id: 'price_1TUDMUQu1YpWmfU0YKer3uRx', amount: 19, interval: 'month' as const },
+    yearly: { id: 'price_1TUDMmQu1YpWmfU0qAoMonqK', amount: 190, interval: 'year' as const },
+  },
+  max: {
+    monthly: { id: 'price_1TUDMuQu1YpWmfU04iNloR3Y', amount: 79, interval: 'month' as const },
+    yearly: { id: 'price_1TUDN3Qu1YpWmfU0Wbeibk7t', amount: 790, interval: 'year' as const },
+  },
+};

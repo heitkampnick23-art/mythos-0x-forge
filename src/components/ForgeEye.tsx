@@ -40,6 +40,8 @@ interface ForgeEyeProps {
   onError: (msg: string) => void;
   /** kicks ember field into the right mode */
   onModeChange: (m: 'idle' | 'scanning' | 'flagged') => void;
+  /** fires when API returns 402 — used to navigate to /pricing */
+  onPaywall?: (detail: { tier: string; used: number; limit: number; upgradeUrl: string }) => void;
 }
 
 export interface ForgeEyeHandle {
@@ -50,7 +52,7 @@ export interface ForgeEyeHandle {
 }
 
 export const ForgeEye = forwardRef<ForgeEyeHandle, ForgeEyeProps>(function ForgeEye(
-  { state, setState, onError, onModeChange },
+  { state, setState, onError, onModeChange, onPaywall },
   ref,
 ) {
   const inputRef = useRef<HTMLInputElement>(null);
@@ -116,7 +118,15 @@ export const ForgeEye = forwardRef<ForgeEyeHandle, ForgeEyeProps>(function Forge
       });
       setState({ kind: 'results', file, url, mediaKind, result });
     } catch (e) {
-      if ((e as Error).name !== 'AbortError') {
+      const err = e as { rateLimited?: boolean; tier?: string; used?: number; limit?: number; upgradeUrl?: string; name?: string };
+      if (err.rateLimited && onPaywall) {
+        onPaywall({
+          tier: err.tier ?? 'free',
+          used: err.used ?? 0,
+          limit: err.limit ?? 0,
+          upgradeUrl: err.upgradeUrl ?? '/pricing',
+        });
+      } else if (err.name !== 'AbortError') {
         onError('Analysis failed. Try again.');
       }
       setState({ kind: 'previewing', file, url, mediaKind });

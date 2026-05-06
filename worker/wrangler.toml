@@ -14,9 +14,25 @@ custom_domain = true
 binding = "MEDIA"
 bucket_name = "mythos-forge-media"
 
-# Vars (non-secret). Secrets set via `wrangler secret put`:
-#   SIGHTENGINE_USER + SIGHTENGINE_SECRET — detection (optional; falls back to mock)
-#   ANTHROPIC_API_KEY                     — narration (optional; falls back to static)
+# D1 database for users, subscriptions, usage, analyses
+[[d1_databases]]
+binding = "DB"
+database_name = "mythos-forge"
+database_id = "117161cf-7312-43be-b20c-02e6bf50a368"
+
+# Vars (non-secret).
 [vars]
 ALLOWED_ORIGIN = "https://mythos0x.com"
 ENABLE_MOCK_FALLBACK = "true"
+SITE_URL = "https://mythos0x.com"
+PRICE_PRO_MONTHLY = "price_1TUDMUQu1YpWmfU0YKer3uRx"
+PRICE_PRO_YEARLY = "price_1TUDMmQu1YpWmfU0qAoMonqK"
+PRICE_MAX_MONTHLY = "price_1TUDMuQu1YpWmfU04iNloR3Y"
+PRICE_MAX_YEARLY = "price_1TUDN3Qu1YpWmfU0Wbeibk7t"
+
+# Secrets (set via `wrangler secret put`):
+#   SIGHTENGINE_USER + SIGHTENGINE_SECRET — detection
+#   ANTHROPIC_API_KEY                     — narration
+#   STRIPE_SECRET_KEY                     — sk_live_…
+#   STRIPE_WEBHOOK_SECRET                 — whsec_… (from webhook endpoint)
+#   RESEND_API_KEY                        — magic-link emails (optional v2)
