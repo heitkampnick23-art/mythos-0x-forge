@@ -1,0 +1,22 @@
+name = "mythos-forge-api"
+main = "src/index.ts"
+compatibility_date = "2026-04-01"
+compatibility_flags = ["nodejs_compat"]
+account_id = "4d259cf98fff468b0108b6a80b7a10fc"
+
+# Custom domain — bound after first deploy
+[[routes]]
+pattern = "api.mythos0x.com"
+custom_domain = true
+
+# R2 bucket for ephemeral media (auto-deleted after analysis)
+[[r2_buckets]]
+binding = "MEDIA"
+bucket_name = "mythos-forge-media"
+
+# Vars (non-secret). Secrets set via `wrangler secret put`:
+#   ANTHROPIC_API_KEY      — narration layer (optional; falls back to static findings)
+#   REALITY_DEFENDER_API_KEY — detection (optional; falls back to deterministic mock)
+[vars]
+ALLOWED_ORIGIN = "https://mythos0x.com"
+ENABLE_MOCK_FALLBACK = "true"
