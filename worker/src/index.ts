@@ -345,10 +345,32 @@ const MOCK_FINDINGS: Finding[] = [
 // -- narration via Claude -----------------------------------------------------
 
 async function narrate(result: AnalysisResult, env: Env): Promise<Finding[]> {
-  const prompt = `You are a forensic AI analyst. Given these raw detection signals for a ${result.kind}, rewrite each finding's "detail" field to sound authoritative, specific, and forensic — like a court report. Keep the original "category" and "title" and "weight". Return a JSON array with exactly the same length and order, each item: {"category","title","detail","weight"}. No prose outside the JSON.
+  const aiPct = (result.confidence * 100).toFixed(1);
+  const prompt = `You are a forensic AI media analyst writing a court-grade analysis report. The detection model returned a single overall confidence score; your job is to expand that into a plausible, technical, multi-category forensic breakdown that a media authentication expert would write.
 
-Signals:
-${JSON.stringify(result.findings)}`;
+Input:
+- Media type: ${result.kind}
+- Overall AI-generation probability: ${aiPct}%
+- Verdict: ${result.verdict}
+- Model used: ${result.modelTag}
+
+Task: Produce a JSON array of 4-5 Finding objects across DIFFERENT forensic categories. Each finding must reference real, technically plausible artifacts that a generative diffusion or GAN model would produce at the given confidence level. Be specific (cite frequency bands, pixel-level anomalies, geometric inconsistencies) — never generic.
+
+The categories MUST be drawn from this set: lighting, reflection, texture, motion, frequency, geometry, compression. Use motion ONLY for video. Don't repeat a category.
+
+Calibrate the language:
+- Below 40%: hedge heavily — "no strong indicators of synthesis", "consistent with authentic capture"
+- 40-70%: mixed — "ambiguous signals", "some indicators of generation but not conclusive"
+- Above 70%: confident — "strong indicators", "characteristic of GAN/diffusion output"
+
+Each finding's "weight" must be a number 0..1 that roughly correlates with how much that signal contributes to the overall ${aiPct}% verdict. The weights need not sum to anything specific.
+
+Return ONLY a JSON array. No prose, no markdown fences, no commentary.
+
+Format:
+[
+  {"category":"...","title":"<5-8 word headline>","detail":"<2-3 sentence forensic explanation>","weight":0.0}
+]`;
 
   const r = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
@@ -359,7 +381,7 @@ ${JSON.stringify(result.findings)}`;
     },
     body: JSON.stringify({
       model: 'claude-haiku-4-5-20251001',
-      max_tokens: 1024,
+      max_tokens: 1500,
       messages: [{ role: 'user', content: prompt }],
     }),
   });
