@@ -6,3 +6,10 @@
 
 /assets/*
   Cache-Control: public, max-age=31536000, immutable
+
+# Embed cards must be iframe-able from anywhere — that's the whole point.
+# Override the global X-Frame-Options: DENY and add a permissive CSP.
+/embed/*
+  X-Frame-Options: ALLOWALL
+  Content-Security-Policy: frame-ancestors *
+  Cache-Control: public, max-age=300
