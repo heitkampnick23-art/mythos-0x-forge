@@ -8,8 +8,11 @@
   Cache-Control: public, max-age=31536000, immutable
 
 # Embed cards must be iframe-able from anywhere — that's the whole point.
-# Override the global X-Frame-Options: DENY and add a permissive CSP.
+# Cloudflare _headers can't remove a header set by an earlier matching rule,
+# so the global X-Frame-Options: DENY still appears alongside ALLOWALL. The
+# Content-Security-Policy: frame-ancestors directive overrides XFO entirely
+# in all modern browsers (CSP Level 2 §6.1), so framing works regardless.
 /embed/*
-  X-Frame-Options: ALLOWALL
+  ! X-Frame-Options
   Content-Security-Policy: frame-ancestors *
   Cache-Control: public, max-age=300
