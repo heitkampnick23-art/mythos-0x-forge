@@ -32,6 +32,7 @@ export function Footer({ onNavigate, authenticated }: Props) {
           {link('Forge', '/')}
           {link('Heartbeat', '/agents')}
           {link('Feed', '/feed')}
+          {link('Compare', '/compare')}
           {link('Bulk', '/batch')}
           {link('For Attorneys', '/for-attorneys')}
           {link('Pricing', '/pricing')}

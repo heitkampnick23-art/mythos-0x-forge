@@ -19,6 +19,7 @@ import { VerdictPage } from './components/VerdictPage';
 import { Batch } from './components/Batch';
 import { ForAttorneys } from './components/ForAttorneys';
 import { Feed } from './components/Feed';
+import { Compare } from './components/Compare';
 import { Onboarding } from './components/Onboarding';
 import { RecentVerdicts } from './components/RecentVerdicts';
 import { useAuth } from './hooks/useAuth';
@@ -35,13 +36,14 @@ type Route =
   | '/agents/new'
   | '/batch'
   | '/feed'
+  | '/compare'
   | '/for-attorneys'
   | { kind: 'soul'; idOrSlug: string }
   | { kind: 'verdict'; slug: string };
 
 const STATIC_ROUTES = [
   '/', '/pricing', '/account', '/history', '/terms', '/privacy', '/aup',
-  '/agents', '/agents/new', '/batch', '/feed', '/for-attorneys',
+  '/agents', '/agents/new', '/batch', '/feed', '/compare', '/for-attorneys',
 ] as const;
 
 function currentRoute(): Route {
@@ -205,6 +207,7 @@ export default function App() {
       {route === '/history' && <History me={me} onNavigate={navigate} />}
       {route === '/batch' && <Batch me={me} onNavigate={navigate} />}
       {route === '/feed' && <Feed onNavigate={navigate} />}
+      {route === '/compare' && <Compare onNavigate={navigate} />}
       {route === '/for-attorneys' && <ForAttorneys onNavigate={navigate} />}
       {route === '/terms' && <Terms onBack={() => navigate('/')} />}
       {route === '/privacy' && <Privacy onBack={() => navigate('/')} />}
