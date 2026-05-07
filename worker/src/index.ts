@@ -50,6 +50,8 @@ import {
 } from './souls';
 import { chargeCost, getBudget } from './budget';
 import { canView, loadBySlug, publicPayload, renderPdf, streamMedia } from './verdicts';
+import { runAlertsCheck } from './alerts';
+import { embedScript } from './embed';
 
 const MAX_IMAGE = 20 * 1024 * 1024;
 const MAX_VIDEO = 50 * 1024 * 1024;
@@ -57,10 +59,19 @@ const IMAGE_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp']);
 const VIDEO_TYPES = new Set(['video/mp4', 'video/webm']);
 
 export default {
+  /** Cron trigger — Cloudflare Workers fires this on the schedule defined in
+   *  wrangler.toml [triggers] crons. Currently runs hourly to scan for cost
+   *  anomalies and new subs, posting to ALERT_WEBHOOK_URL when it finds
+   *  anything noteworthy. */
+  async scheduled(_event: ScheduledEvent, env: Env, ctx: ExecutionContext): Promise<void> {
+    buildPriceMap(env);
+    ctx.waitUntil(runAlertsCheck(env).then((r) => console.log('alerts: posted', r.posted)));
+  },
+
   async fetch(req: Request, env: Env): Promise<Response> {
     buildPriceMap(env);
     const url = new URL(req.url);
-    const cors = corsHeaders(env, req.headers.get('origin'));
+    const cors = corsHeaders(env, req.headers.get('origin'), req);
 
     if (req.method === 'OPTIONS') {
       return new Response(null, { status: 204, headers: cors });
@@ -69,6 +80,28 @@ export default {
     try {
       // Auth & app routes
       if (url.pathname === '/v1/health') return json({ ok: true, ts: Date.now() }, cors);
+      // Heartbeat embed widget — public, drop-in script for any site.
+      if (url.pathname === '/v1/embed/heartbeat.js' && req.method === 'GET') {
+        return new Response(embedScript(env), {
+          status: 200,
+          headers: {
+            'content-type': 'application/javascript; charset=utf-8',
+            'cache-control': 'public, max-age=300',
+            'access-control-allow-origin': '*',
+          },
+        });
+      }
+      // Manual alert-check trigger (for testing the webhook integration).
+      // Auth-gated to Max only so randoms can't spam your Slack.
+      if (url.pathname === '/v1/admin/alerts-check' && req.method === 'POST') {
+        const token = readSessionCookie(req);
+        const user = token ? await lookupSession(env, token) : null;
+        if (!user) return json({ error: 'auth_required' }, cors, 401);
+        const tier = await tierForUser(env, user.id);
+        if (tier !== 'max') return json({ error: 'forbidden' }, cors, 403);
+        const r = await runAlertsCheck(env);
+        return json(r, cors);
+      }
       if (url.pathname === '/v1/me') return await whoami(req, env, cors);
       if (url.pathname === '/v1/me/usage' && req.method === 'GET')
         return await meUsage(req, env, cors);
@@ -948,8 +981,27 @@ function safeName(name: string): string {
   return name.replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 80);
 }
 
-function corsHeaders(env: Env, origin: string | null): HeadersInit {
+function corsHeaders(env: Env, origin: string | null, req?: Request): HeadersInit {
   const allowed = origin === env.ALLOWED_ORIGIN || origin === 'http://localhost:5173';
+  // Embed widget endpoints accept any origin (souls chat/speak from arbitrary
+  // sites where the widget is dropped in). Credentialed cookie auth still
+  // requires same-site, but anonymous chat works cross-origin.
+  const url = req ? new URL(req.url) : null;
+  const isEmbedSurface =
+    url &&
+    (url.pathname === '/v1/embed/heartbeat.js' ||
+      url.pathname.match(/^\/v1\/souls\/[^/]+\/(chat|speak)$/) ||
+      url.pathname.match(/^\/v1\/souls\/[^/]+$/));
+  if (isEmbedSurface && origin && !allowed) {
+    return {
+      'access-control-allow-origin': origin,
+      'access-control-allow-credentials': 'false',
+      'access-control-allow-methods': 'POST, GET, OPTIONS',
+      'access-control-allow-headers': 'content-type',
+      'access-control-max-age': '86400',
+      vary: 'origin',
+    };
+  }
   return {
     'access-control-allow-origin': allowed ? origin! : env.ALLOWED_ORIGIN,
     'access-control-allow-credentials': 'true',

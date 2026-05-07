@@ -22,6 +22,8 @@ export interface Env {
   RESEND_FROM?: string;
   /** ElevenLabs TTS for verdict readout (Pro+ feature). */
   ELEVENLABS_API_KEY?: string;
+  /** Slack/Discord webhook URL for anomaly alerts (cron-driven). */
+  ALERT_WEBHOOK_URL?: string;
 }
 
 export type Tier = 'free' | 'pro' | 'max';

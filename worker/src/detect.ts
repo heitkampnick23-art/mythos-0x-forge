@@ -15,7 +15,8 @@ export async function runDetection(
   if (env.SIGHTENGINE_USER && env.SIGHTENGINE_SECRET) {
     try {
       result = await detectWithSightengine(file, kind, env);
-      await chargeCost(env, identity, { sightengine_ops: kind === 'video' ? 5 : 1 });
+      // 2 models per image (genai + deepfake) = 2 ops; video = ~5 frames × 2.
+      await chargeCost(env, identity, { sightengine_ops: kind === 'video' ? 10 : 2 });
     } catch (e) {
       console.error('sightengine_failed', (e as Error).message);
       if (env.ENABLE_MOCK_FALLBACK === 'true') result = await mockAnalyze(file, kind);
@@ -51,7 +52,12 @@ async function detectWithSightengine(
 
   const form = new FormData();
   form.append('media', file, file.name);
-  form.append('models', 'genai');
+  // Multi-model forensic analysis:
+  //   genai     — AI/diffusion-generated probability
+  //   deepfake  — face-swap probability (different signal; catches manipulated
+  //               real photos that genai might miss, e.g. real photo with a
+  //               swapped face)
+  form.append('models', 'genai,deepfake');
   form.append('api_user', env.SIGHTENGINE_USER!);
   form.append('api_secret', env.SIGHTENGINE_SECRET!);
 
@@ -70,46 +76,77 @@ async function detectWithSightengine(
 interface SightengineResult {
   status: string;
   error?: { message?: string; code?: number };
-  type?: { ai_generated?: number };
-  data?: { frames?: Array<{ position?: number; type?: { ai_generated?: number } }> };
+  type?: { ai_generated?: number; deepfake?: number };
+  data?: {
+    frames?: Array<{
+      position?: number;
+      type?: { ai_generated?: number; deepfake?: number };
+    }>;
+  };
 }
 
 function mapSightengine(data: SightengineResult, kind: MediaKind): AnalysisResult {
-  let confidence = 0;
-  let peak = 0;
+  let aiGen = 0;
+  let deepfake = 0;
+  let aiPeak = 0;
+  let dfPeak = 0;
   let frameCount = 0;
   if (kind === 'image') {
-    confidence = data.type?.ai_generated ?? 0;
-    peak = confidence;
+    aiGen = data.type?.ai_generated ?? 0;
+    deepfake = data.type?.deepfake ?? 0;
+    aiPeak = aiGen;
+    dfPeak = deepfake;
     frameCount = 1;
   } else {
     const frames = data.data?.frames ?? [];
     frameCount = frames.length;
     if (frames.length > 0) {
-      const scores = frames.map((f) => f.type?.ai_generated ?? 0);
-      confidence = scores.reduce((s, v) => s + v, 0) / scores.length;
-      peak = Math.max(...scores);
+      const aiScores = frames.map((f) => f.type?.ai_generated ?? 0);
+      const dfScores = frames.map((f) => f.type?.deepfake ?? 0);
+      aiGen = aiScores.reduce((s, v) => s + v, 0) / aiScores.length;
+      deepfake = dfScores.reduce((s, v) => s + v, 0) / dfScores.length;
+      aiPeak = Math.max(...aiScores);
+      dfPeak = Math.max(...dfScores);
     }
   }
+
+  // Combined verdict: take the max of the two signals (a hit on either means
+  // the media is suspect). This broadens the product from "AI detector" to
+  // "forensic authentication" — catches generated-from-scratch AND face-swap.
+  const confidence = Math.max(aiGen, deepfake);
+  const peakConfidence = Math.max(aiPeak, dfPeak);
 
   const findings: Finding[] = [
     {
       category: 'frequency',
       title: 'Generative diffusion signature',
-      detail: `Sightengine genai model returned ${(confidence * 100).toFixed(1)}% AI-generation probability${
+      detail: `Sightengine genai model returned ${(aiGen * 100).toFixed(1)}% AI-generation probability${
         kind === 'video'
-          ? ` (averaged across ${frameCount} sampled frames; peak ${(peak * 100).toFixed(1)}%)`
+          ? ` (averaged across ${frameCount} frames; peak ${(aiPeak * 100).toFixed(1)}%)`
           : ''
       }.`,
-      weight: confidence,
+      weight: aiGen,
     },
   ];
-  if (kind === 'video' && peak > confidence + 0.15) {
+  // Add deepfake finding only if non-trivial — avoids cluttering authentic results
+  if (deepfake > 0.1) {
+    findings.push({
+      category: 'geometry',
+      title: 'Face-swap (deepfake) probability',
+      detail: `Sightengine deepfake model returned ${(deepfake * 100).toFixed(1)}% probability of face manipulation${
+        kind === 'video'
+          ? ` (peak ${(dfPeak * 100).toFixed(1)}% across ${frameCount} frames)`
+          : ''
+      }. This is a separate signal from generation: real photos with swapped faces will trigger this without triggering the genai score.`,
+      weight: deepfake,
+    });
+  }
+  if (kind === 'video' && peakConfidence > confidence + 0.15) {
     findings.push({
       category: 'motion',
       title: 'Inconsistent frame-level scoring',
-      detail: `Per-frame variance is high (peak ${(peak * 100).toFixed(1)}% vs mean ${(confidence * 100).toFixed(1)}%) — segments score significantly more synthetic than others.`,
-      weight: Math.min(1, peak - confidence + 0.5),
+      detail: `Per-frame variance is high (peak ${(peakConfidence * 100).toFixed(1)}% vs mean ${(confidence * 100).toFixed(1)}%) — segments score significantly more synthetic than others.`,
+      weight: Math.min(1, peakConfidence - confidence + 0.5),
     });
   }
 
@@ -117,7 +154,7 @@ function mapSightengine(data: SightengineResult, kind: MediaKind): AnalysisResul
     kind,
     confidence,
     verdict: confidence < 0.4 ? 'authentic' : confidence < 0.7 ? 'suspect' : 'synthetic',
-    modelTag: 'sightengine/genai',
+    modelTag: deepfake > 0.1 ? 'sightengine/genai+deepfake' : 'sightengine/genai',
     durationMs: 0,
     boxes: [],
     findings,

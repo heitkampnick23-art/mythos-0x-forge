@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Mythos 0X Forge</title>
+    <style>
+      :root { color-scheme: dark; }
+      * { box-sizing: border-box; margin: 0; padding: 0; }
+      html, body {
+        width: 320px;
+        font-family: system-ui, -apple-system, sans-serif;
+        background: #0a0608;
+        color: #fff;
+      }
+      .wrap { padding: 18px 18px 16px; }
+      .wordmark {
+        font-size: 22px;
+        font-weight: 600;
+        letter-spacing: -0.01em;
+        background: linear-gradient(180deg, #ffe6c4 0%, #ffb347 50%, #c81d25 100%);
+        -webkit-background-clip: text;
+        background-clip: text;
+        color: transparent;
+      }
+      .tag {
+        margin-top: 4px;
+        font-size: 9px;
+        text-transform: uppercase;
+        letter-spacing: 0.32em;
+        color: rgba(255, 180, 71, 0.7);
+      }
+      .desc { margin-top: 14px; font-size: 12.5px; line-height: 1.5; color: rgba(255,255,255,0.65); }
+      kbd {
+        display: inline-block;
+        padding: 2px 6px;
+        border: 1px solid rgba(255,255,255,0.12);
+        border-radius: 4px;
+        background: rgba(255,255,255,0.04);
+        font-family: ui-monospace, monospace;
+        font-size: 10px;
+        color: #ffb347;
+      }
+      .actions { margin-top: 14px; display: flex; gap: 6px; flex-wrap: wrap; }
+      a.btn {
+        flex: 1;
+        text-align: center;
+        padding: 9px 10px;
+        border: 1px solid rgba(255,87,34,0.4);
+        border-radius: 999px;
+        background: linear-gradient(135deg, rgba(255,87,34,0.18), rgba(200,29,37,0.14));
+        font-size: 9.5px;
+        text-transform: uppercase;
+        letter-spacing: 0.24em;
+        font-weight: 600;
+        color: #fff;
+        text-decoration: none;
+        box-shadow: 0 0 16px rgba(255,87,34,0.3);
+      }
+      a.btn.ghost {
+        background: rgba(255,255,255,0.03);
+        border-color: rgba(255,255,255,0.1);
+        box-shadow: none;
+        color: rgba(255,255,255,0.7);
+      }
+      .footer {
+        margin-top: 14px;
+        font-size: 8.5px;
+        text-transform: uppercase;
+        letter-spacing: 0.28em;
+        color: rgba(255,255,255,0.3);
+        text-align: center;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <div class="wordmark">Mythos 0X Forge</div>
+      <div class="tag">Forensic AI Authentication</div>
+      <p class="desc">
+        <strong>Right-click any image</strong> on any page and pick
+        <em>Scan with Mythos 0X Forge</em>. We hash it, run multi-model
+        forensic detection (genai + deepfake), and open a sharable verdict.
+      </p>
+      <div class="actions">
+        <a class="btn" href="https://mythos0x.com" target="_blank">Open Forge</a>
+        <a class="btn ghost" href="https://mythos0x.com/pricing" target="_blank">Pricing</a>
+      </div>
+      <div class="footer">v0.1 · forensic media auth</div>
+    </div>
+  </body>
+</html>
