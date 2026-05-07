@@ -18,6 +18,7 @@ import { SoulChat } from './components/heartbeat/SoulChat';
 import { VerdictPage } from './components/VerdictPage';
 import { Batch } from './components/Batch';
 import { ForAttorneys } from './components/ForAttorneys';
+import { Feed } from './components/Feed';
 import { RecentVerdicts } from './components/RecentVerdicts';
 import { useAuth } from './hooks/useAuth';
 
@@ -32,13 +33,14 @@ type Route =
   | '/agents'
   | '/agents/new'
   | '/batch'
+  | '/feed'
   | '/for-attorneys'
   | { kind: 'soul'; idOrSlug: string }
   | { kind: 'verdict'; slug: string };
 
 const STATIC_ROUTES = [
   '/', '/pricing', '/account', '/history', '/terms', '/privacy', '/aup',
-  '/agents', '/agents/new', '/batch', '/for-attorneys',
+  '/agents', '/agents/new', '/batch', '/feed', '/for-attorneys',
 ] as const;
 
 function currentRoute(): Route {
@@ -79,6 +81,22 @@ export default function App() {
     // Reparse from URL so dynamic routes like /agents/:slug land correctly
     setRoute(currentRoute());
     window.scrollTo({ top: 0 });
+  }, []);
+
+  // Capture ?ref=<code> on first landing → 30-day cookie. We attach this on
+  // magic-link signup so the new user's referrer gets credited.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const ref = params.get('ref');
+    if (ref && /^[a-z0-9]{4,12}$/i.test(ref)) {
+      const max = 60 * 60 * 24 * 30;
+      document.cookie = `mfr=${encodeURIComponent(ref)}; Path=/; Max-Age=${max}; Secure; SameSite=Lax`;
+      // Strip the param so it doesn't churn analytics
+      params.delete('ref');
+      const qs = params.toString();
+      const next = window.location.pathname + (qs ? `?${qs}` : '') + window.location.hash;
+      window.history.replaceState(null, '', next);
+    }
   }, []);
 
   // Acknowledge auth + checkout query params on landing
@@ -165,6 +183,7 @@ export default function App() {
       )}
       {route === '/history' && <History me={me} onNavigate={navigate} />}
       {route === '/batch' && <Batch me={me} onNavigate={navigate} />}
+      {route === '/feed' && <Feed onNavigate={navigate} />}
       {route === '/for-attorneys' && <ForAttorneys onNavigate={navigate} />}
       {route === '/terms' && <Terms onBack={() => navigate('/')} />}
       {route === '/privacy' && <Privacy onBack={() => navigate('/')} />}

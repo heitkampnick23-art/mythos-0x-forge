@@ -57,6 +57,13 @@ import { isOverageEnabled, recordOverage, setupOverageInfra } from './overage';
 import { attachPhone, detachPhone, handleIncoming, handleRespond, handleTts } from './phone';
 import { batchCsv, createBatch, getBatchStatus, listBatches, processBatch } from './batch';
 import { getSignedUrl as getConvaiSignedUrl } from './convai';
+import {
+  applyReferralOnSignup,
+  ensureReferralCode,
+  readReferralCookie,
+  recordReferralPayment,
+  statsFor as referralStatsFor,
+} from './referrals';
 // NOTE: src/campaigns.ts exists as scaffolding for a future personal-CRM
 // feature (manually-added contacts only). Intentionally NOT imported / wired
 // — sending bulk cold email to non-consenting recipients would burn the
@@ -171,6 +178,8 @@ export default {
         return await meUsage(req, env, cors);
       if (url.pathname === '/v1/me/profile' && req.method === 'POST')
         return await meProfile(req, env, cors);
+      if (url.pathname === '/v1/me/referrals' && req.method === 'GET')
+        return await meReferrals(req, env, cors);
       if (url.pathname === '/v1/analyses' && req.method === 'GET')
         return await listAnalyses(req, env, cors);
       if (url.pathname === '/v1/analyze' && req.method === 'POST')
@@ -178,6 +187,44 @@ export default {
       if (url.pathname === '/v1/voice/verdict' && req.method === 'POST')
         return await voiceVerdict(req, env, cors);
 
+      // Paginated public feed
+      if (url.pathname === '/v1/verdicts/feed' && req.method === 'GET') {
+        const limit = Math.min(Math.max(Number(url.searchParams.get('limit') ?? 24), 1), 60);
+        const before = Number(url.searchParams.get('before') ?? 0);
+        const verdictFilter = url.searchParams.get('verdict'); // optional
+        const filterClauses = ['public = 1', 'share_slug IS NOT NULL'];
+        const params: unknown[] = [];
+        if (before > 0) {
+          filterClauses.push('created_at < ?');
+          params.push(before);
+        }
+        if (verdictFilter && ['authentic', 'suspect', 'synthetic'].includes(verdictFilter)) {
+          filterClauses.push('verdict = ?');
+          params.push(verdictFilter);
+        }
+        const sql = `SELECT share_slug, kind, confidence, verdict, original_name, created_at
+                     FROM analyses WHERE ${filterClauses.join(' AND ')}
+                     ORDER BY created_at DESC LIMIT ?`;
+        params.push(limit + 1);
+        const rows = await env.DB.prepare(sql).bind(...params).all<{
+          share_slug: string;
+          kind: string;
+          confidence: number;
+          verdict: string;
+          original_name: string | null;
+          created_at: number;
+        }>();
+        const items = rows.results ?? [];
+        const hasMore = items.length > limit;
+        const trimmed = hasMore ? items.slice(0, limit) : items;
+        const next = hasMore ? trimmed[trimmed.length - 1].created_at : null;
+        const headers = new Headers(cors as HeadersInit);
+        headers.set('cache-control', 'public, max-age=60');
+        return new Response(JSON.stringify({ verdicts: trimmed, next_before: next }), {
+          status: 200,
+          headers: { 'content-type': 'application/json', ...Object.fromEntries(headers) },
+        });
+      }
       // Recent public verdicts (for homepage social-proof strip)
       if (url.pathname === '/v1/verdicts/recent' && req.method === 'GET') {
         const rows = await env.DB.prepare(
@@ -282,6 +329,7 @@ async function whoami(req: Request, env: Env, cors: HeadersInit): Promise<Respon
     return json({ authenticated: false, tier: 'free' as Tier, limits: DAILY_LIMITS }, cors);
   }
   const tier = await tierForUser(env, user.id);
+  const referral_code = await ensureReferralCode(env, user.id);
   // Fetch profile columns separately because lookupSession returns the base User shape.
   const profile = await env.DB.prepare(
     'SELECT display_name, default_voice_id, auto_speak, notify_email FROM users WHERE id = ?',
@@ -301,6 +349,7 @@ async function whoami(req: Request, env: Env, cors: HeadersInit): Promise<Respon
         email: user.email,
         tier,
         hasStripe: !!user.stripe_customer_id,
+        referral_code,
         display_name: profile?.display_name ?? null,
         default_voice_id: profile?.default_voice_id ?? 'pNInz6obpgDQGcFmaJgB',
         auto_speak: profile?.auto_speak !== 0,
@@ -353,6 +402,14 @@ async function meUsage(req: Request, env: Env, cors: HeadersInit): Promise<Respo
     },
     cors,
   );
+}
+
+async function meReferrals(req: Request, env: Env, cors: HeadersInit): Promise<Response> {
+  const token = readSessionCookie(req);
+  const user = token ? await lookupSession(env, token) : null;
+  if (!user) return json({ error: 'auth_required' }, cors, 401);
+  const stats = await referralStatsFor(env, user.id);
+  return json(stats, cors);
 }
 
 async function meProfile(req: Request, env: Env, cors: HeadersInit): Promise<Response> {
@@ -687,17 +744,20 @@ async function portal(req: Request, env: Env, cors: HeadersInit): Promise<Respon
 // -- magic-link auth ----------------------------------------------------------
 
 async function sendMagicLink(req: Request, env: Env, cors: HeadersInit): Promise<Response> {
-  const body = (await req.json().catch(() => ({}))) as { email?: string };
+  const body = (await req.json().catch(() => ({}))) as { email?: string; ref?: string };
   const email = body.email?.trim().toLowerCase();
   if (!email || !email.includes('@')) return json({ error: 'invalid_email' }, cors, 400);
 
   const token = randomToken();
   const now = Math.floor(Date.now() / 1000);
   const expires = now + 60 * 15; // 15 minutes
+  // Prefer ref from body (frontend reads its own mfr cookie) and fall back
+  // to the request cookie if present (works when site/api share parent domain).
+  const refCode = (body.ref?.trim() || readReferralCookie(req) || null);
   await env.DB.prepare(
-    'INSERT INTO magic_tokens (token, email, expires_at, created_at) VALUES (?, ?, ?, ?)',
+    'INSERT INTO magic_tokens (token, email, expires_at, created_at, ref_code) VALUES (?, ?, ?, ?, ?)',
   )
-    .bind(token, email, expires, now)
+    .bind(token, email, expires, now, refCode)
     .run();
 
   const verifyUrl = `https://api.mythos0x.com/v1/auth/verify?token=${token}`;
@@ -735,10 +795,10 @@ async function verifyMagicLink(_req: Request, env: Env, url: URL): Promise<Respo
 
   const now = Math.floor(Date.now() / 1000);
   const row = await env.DB.prepare(
-    'SELECT email, expires_at, consumed_at FROM magic_tokens WHERE token = ?',
+    'SELECT email, expires_at, consumed_at, ref_code FROM magic_tokens WHERE token = ?',
   )
     .bind(token)
-    .first<{ email: string; expires_at: number; consumed_at: number | null }>();
+    .first<{ email: string; expires_at: number; consumed_at: number | null; ref_code: string | null }>();
   if (!row || row.consumed_at || row.expires_at < now) {
     return Response.redirect(`${env.SITE_URL}/?auth=expired`, 302);
   }
@@ -747,6 +807,14 @@ async function verifyMagicLink(_req: Request, env: Env, url: URL): Promise<Respo
     .run();
 
   const user = await upsertUserByEmail(env, row.email);
+  const isNewUser = user.created_at === user.last_seen_at;
+  if (row.ref_code) {
+    try {
+      await applyReferralOnSignup(env, user, row.ref_code, isNewUser);
+    } catch (e) {
+      console.error('referral_apply_failed', (e as Error).message);
+    }
+  }
   const session = await createSession(env, user.id);
 
   return new Response(null, {
@@ -885,6 +953,17 @@ async function upsertSubscription(env: Env, sub: StripeSubscription): Promise<vo
   await env.DB.prepare('UPDATE users SET tier = ? WHERE id = ?')
     .bind(sub.status === 'active' || sub.status === 'trialing' ? meta.tier : 'free', user.id)
     .run();
+  // Referral attribution: if this is the user's first paid subscription,
+  // mark the referrals row 'paid'. recordReferralPayment is idempotent
+  // (only updates rows still in 'signed_up' status).
+  if (sub.status === 'active' || sub.status === 'trialing') {
+    const cents = meta.tier === 'max' ? 7900 : 1900;
+    try {
+      await recordReferralPayment(env, user.id, sub.id, cents);
+    } catch (e) {
+      console.error('referral_payment_failed', (e as Error).message);
+    }
+  }
 }
 
 async function markSubscriptionCanceled(env: Env, sub: StripeSubscription): Promise<void> {

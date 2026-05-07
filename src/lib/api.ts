@@ -21,6 +21,7 @@ export interface MeResponse {
     default_voice_id: string;
     auto_speak: boolean;
     notify_email: boolean;
+    referral_code?: string;
   };
   tier?: Tier;
   limits: Limits;
@@ -89,11 +90,31 @@ export async function openBillingPortal(): Promise<string> {
 }
 
 export async function sendMagicLink(email: string): Promise<void> {
+  // Forward the mfr referral cookie (set on landing) so the Worker can
+  // attribute the signup. Cookie isn't auto-sent to api subdomain when the
+  // SPA is on the apex domain; reading & posting it explicitly avoids that.
+  const ref = readRefCookie();
   await api<{ ok: true }>('/v1/auth/magic-link', {
     method: 'POST',
-    body: JSON.stringify({ email }),
+    body: JSON.stringify({ email, ref }),
   });
 }
+
+function readRefCookie(): string | null {
+  if (typeof document === 'undefined') return null;
+  const m = document.cookie.match(/(?:^|; )mfr=([^;]+)/);
+  return m ? decodeURIComponent(m[1]) : null;
+}
+
+export interface ReferralStats {
+  code: string;
+  signed_up: number;
+  paid: number;
+  cents_owed: number;
+}
+
+export const fetchReferralStats = (): Promise<ReferralStats> =>
+  api<ReferralStats>('/v1/me/referrals');
 
 export async function logout(): Promise<void> {
   await api<{ ok: true }>('/v1/auth/logout', { method: 'POST' });
@@ -146,6 +167,20 @@ export interface RecentVerdict {
 
 export const fetchRecentVerdicts = () =>
   api<{ verdicts: RecentVerdict[] }>('/v1/verdicts/recent').then((r) => r.verdicts);
+
+export interface FeedPage {
+  verdicts: RecentVerdict[];
+  next_before: number | null;
+}
+
+export const fetchFeed = (opts: { before?: number; verdict?: string; limit?: number } = {}) => {
+  const params = new URLSearchParams();
+  if (opts.before) params.set('before', String(opts.before));
+  if (opts.verdict) params.set('verdict', opts.verdict);
+  if (opts.limit) params.set('limit', String(opts.limit));
+  const qs = params.toString();
+  return api<FeedPage>(`/v1/verdicts/feed${qs ? `?${qs}` : ''}`);
+};
 
 export const verdictMediaUrl = (slug: string) => `${API_BASE}/v1/verdicts/${slug}/image`;
 

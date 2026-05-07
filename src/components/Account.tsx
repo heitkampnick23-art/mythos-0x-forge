@@ -9,6 +9,7 @@ import {
 } from '../lib/api';
 import { fetchVoices, type Voice } from '../lib/heartbeat';
 import { GlassPanel } from './glass';
+import { ReferralWidget } from './ReferralWidget';
 
 interface Props {
   me: MeResponse | null;
@@ -117,6 +118,8 @@ export function Account({ me, onRefresh, onNavigate }: Props) {
         </div>
         <TierBadge tier={tier} />
       </header>
+
+      <ReferralWidget />
 
       {/* Usage dashboard */}
       <section className="mb-8 grid grid-cols-1 gap-4 md:grid-cols-3">
