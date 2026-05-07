@@ -57,6 +57,10 @@ import { isOverageEnabled, recordOverage, setupOverageInfra } from './overage';
 import { attachPhone, detachPhone, handleIncoming, handleRespond, handleTts } from './phone';
 import { batchCsv, createBatch, getBatchStatus, listBatches, processBatch } from './batch';
 import { getSignedUrl as getConvaiSignedUrl } from './convai';
+// NOTE: src/campaigns.ts exists as scaffolding for a future personal-CRM
+// feature (manually-added contacts only). Intentionally NOT imported / wired
+// — sending bulk cold email to non-consenting recipients would burn the
+// domain reputation we built and is also what platform classifiers call spam.
 
 const MAX_IMAGE = 20 * 1024 * 1024;
 const MAX_VIDEO = 50 * 1024 * 1024;
