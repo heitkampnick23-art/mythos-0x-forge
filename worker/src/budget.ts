@@ -12,26 +12,32 @@
 import type { Env, Tier } from './types';
 import { utcDay } from './auth';
 
+// Unit: micro-cent = 1/100 of a cent = 1/10,000 of a dollar.
+// $1 = 100¢ = 10,000 mc.  $0.10 = 1,000 mc.  $1.00 = 10,000 mc.
+//
 // Pricing as of 2026-05. Update when providers change rates.
 //   Anthropic Claude Haiku 4.5: $0.80/M input, $4/M output
 //   ElevenLabs Turbo v2.5     : $0.05 / 1k chars (paid tier)
-//   Sightengine genai         : ~$0.30 / 1k ops (after free tier)
+//   Sightengine genai         : $0.30 / 1k ops (after free tier)
 const COST_RATES = {
-  anthropic_in_per_m: 80,        // microcents per token (= $0.80/M ÷ 1M tokens × 100 microcents/¢)
-  anthropic_out_per_m: 400,
-  elevenlabs_per_k_chars: 5000,  // microcents per char (= 5¢/1k = 5000 microcents/1k chars = 5 microcents/char)
-  sightengine_per_op: 30000,     // microcents per op (= 30¢/1k = 30000 microcents/1k = 30 microcents/op)
+  // microcents per million tokens — formula: tokens × rate / 1_000_000
+  anthropic_in_per_m: 8_000,     // = $0.80 × 10,000 mc/$ = 8,000 mc/M tokens
+  anthropic_out_per_m: 40_000,   // = $4.00 × 10,000 mc/$ = 40,000 mc/M tokens
+  // microcents per 1k chars — formula: chars × rate / 1000
+  elevenlabs_per_k_chars: 500,   // = $0.05 × 10,000 mc/$ = 500 mc/1k chars
+  // microcents per op — formula: ops × rate
+  sightengine_per_op: 3,         // = $0.0003 × 10,000 mc/$ = 3 mc/op
 };
 
-// Daily caps in micro-cents. Calibrated to 1× monthly revenue / 30 days
-// so worst case is break-even on a maxed-out user-day.
+// Daily caps. Calibrated to ~1× monthly revenue / 30 days so worst case
+// is break-even on a maxed-out user-day.
 //   Free: $0.10/day (loss-leader, tight cap)
-//   Pro:  $0.65/day (= $19.50/mo, ~break-even at retail)
-//   Max:  $2.65/day (= $79.50/mo, ~break-even at retail)
+//   Pro:  $0.65/day (~$19.50/mo break-even at $19 retail)
+//   Max:  $2.65/day (~$79.50/mo break-even at $79 retail)
 export const DAILY_BUDGET_MICROCENTS: Record<Tier, number> = {
-  free: 10_000,    // $0.10
-  pro:  65_000,    // $0.65
-  max: 265_000,    // $2.65
+  free:   1_000,   // $0.10
+  pro:    6_500,   // $0.65
+  max:   26_500,   // $2.65
 };
 
 export interface BudgetState {
