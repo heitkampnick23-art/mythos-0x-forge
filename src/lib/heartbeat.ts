@@ -27,6 +27,7 @@ export interface SoulOwner extends SoulPublic {
   system_prompt: string;
   is_owner: true;
   remixed_from: string | null;
+  phone_number?: string | null;
 }
 
 async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
@@ -114,6 +115,17 @@ export async function uploadKbDoc(idOrSlug: string, file: File): Promise<KbDoc> 
 
 export const deleteKbDoc = (idOrSlug: string, docId: string) =>
   api<{ ok: boolean }>(`/v1/souls/${idOrSlug}/kb/${docId}`, { method: 'DELETE' });
+
+// -- phone numbers (Twilio) --------------------------------------------------
+
+export const attachPhoneToSoul = (idOrSlug: string, e164: string) =>
+  api<{ ok: boolean }>(`/v1/souls/${idOrSlug}/phone`, {
+    method: 'POST',
+    body: JSON.stringify({ phone_number: e164 }),
+  });
+
+export const detachPhoneFromSoul = (idOrSlug: string) =>
+  api<{ ok: boolean }>(`/v1/souls/${idOrSlug}/phone`, { method: 'DELETE' });
 
 /** Returns an object URL for the streamed MP3. Caller must revoke. */
 export async function speakSoulText(idOrSlug: string, text: string): Promise<string> {

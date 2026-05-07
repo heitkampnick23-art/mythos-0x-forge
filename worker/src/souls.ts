@@ -48,6 +48,8 @@ interface SoulRow {
   remix_count: number;
   created_at: number;
   updated_at: number;
+  phone_number: string | null;
+  phone_provider: string | null;
 }
 
 export function publicShape(s: SoulRow) {
@@ -73,6 +75,8 @@ export function ownerShape(s: SoulRow) {
     system_prompt: s.system_prompt,
     is_owner: true,
     remixed_from: s.remixed_from,
+    phone_number: s.phone_number,
+    phone_provider: s.phone_provider,
   };
 }
 

@@ -53,6 +53,8 @@ import { canView, loadBySlug, publicPayload, renderPdf, streamMedia } from './ve
 import { runAlertsCheck } from './alerts';
 import { embedScript } from './embed';
 import { deleteDoc, listDocs, uploadDoc } from './kb';
+import { isOverageEnabled, recordOverage, setupOverageInfra } from './overage';
+import { attachPhone, detachPhone, handleIncoming, handleRespond, handleTts } from './phone';
 
 const MAX_IMAGE = 20 * 1024 * 1024;
 const MAX_VIDEO = 50 * 1024 * 1024;
@@ -81,6 +83,35 @@ export default {
     try {
       // Auth & app routes
       if (url.pathname === '/v1/health') return json({ ok: true, ts: Date.now() }, cors);
+      // Twilio voice (no auth — Twilio webhook hits us directly)
+      if (url.pathname === '/v1/phone/incoming' && req.method === 'POST')
+        return await handleIncoming(req, env);
+      if (url.pathname === '/v1/phone/respond' && req.method === 'POST')
+        return await handleRespond(req, env);
+      if (url.pathname === '/v1/phone/tts' && req.method === 'GET')
+        return await handleTts(req, env);
+
+      // Phone attach/detach (owner-authenticated)
+      const phoneMatch = url.pathname.match(/^\/v1\/souls\/([^/]+)\/phone$/);
+      if (phoneMatch) {
+        const idOrSlug = phoneMatch[1];
+        const sessionToken = readSessionCookie(req);
+        const sessionUser = sessionToken ? await lookupSession(env, sessionToken) : null;
+        if (!sessionUser) return json({ error: 'auth_required' }, cors, 401);
+        if (req.method === 'POST') {
+          const body = (await req.json().catch(() => ({}))) as { phone_number?: string };
+          if (!body.phone_number) return json({ error: 'missing_phone_number' }, cors, 400);
+          const r = await attachPhone(env, sessionUser.id, idOrSlug, body.phone_number);
+          if (!r.ok) return json({ error: r.error }, cors, r.status);
+          return json({ ok: true }, cors);
+        }
+        if (req.method === 'DELETE') {
+          const r = await detachPhone(env, sessionUser.id, idOrSlug);
+          if (!r.ok) return json({ error: r.error }, cors, r.status);
+          return json({ ok: true }, cors);
+        }
+      }
+
       // Heartbeat embed widget — public, drop-in script for any site.
       if (url.pathname === '/v1/embed/heartbeat.js' && req.method === 'GET') {
         return new Response(embedScript(env), {
@@ -102,6 +133,20 @@ export default {
         if (tier !== 'max') return json({ error: 'forbidden' }, cors, 403);
         const r = await runAlertsCheck(env);
         return json(r, cors);
+      }
+      // One-shot Stripe overage setup. Idempotent. Max-only.
+      if (url.pathname === '/v1/admin/setup-overage' && req.method === 'POST') {
+        const token = readSessionCookie(req);
+        const user = token ? await lookupSession(env, token) : null;
+        if (!user) return json({ error: 'auth_required' }, cors, 401);
+        const tier = await tierForUser(env, user.id);
+        if (tier !== 'max') return json({ error: 'forbidden' }, cors, 403);
+        try {
+          const r = await setupOverageInfra(env);
+          return json(r, cors);
+        } catch (e) {
+          return json({ error: 'setup_failed', detail: (e as Error).message }, cors, 502);
+        }
       }
       if (url.pathname === '/v1/me') return await whoami(req, env, cors);
       if (url.pathname === '/v1/me/usage' && req.method === 'GET')
@@ -330,12 +375,19 @@ async function analyze(req: Request, env: Env, cors: HeadersInit): Promise<Respo
   // Daily limit check (count) + budget check (cost)
   const limit = DAILY_LIMITS[tier];
   const used = await currentUsage(env, identity, day);
+  let overageBilled = false;
   if (used >= limit) {
-    return json(
-      { error: 'rate_limited', tier, used, limit, upgrade_url: `${env.SITE_URL}/pricing` },
-      cors,
-      402,
-    );
+    // Free → hard 402. Pro/Max with active subscription → bill metered overage
+    // and let it through (capped by daily budget below).
+    if (tier === 'free' || !user?.stripe_customer_id || !(await isOverageEnabled(env))) {
+      return json(
+        { error: 'rate_limited', tier, used, limit, upgrade_url: `${env.SITE_URL}/pricing` },
+        cors,
+        402,
+      );
+    }
+    // Bill the overage (best-effort; non-blocking on Stripe failures)
+    overageBilled = (await recordOverage(env, user.stripe_customer_id, 1)).ok;
   }
   const budget = await getBudget(env, identity, tier);
   if (budget.exceeded) {
@@ -415,6 +467,7 @@ async function analyze(req: Request, env: Env, cors: HeadersInit): Promise<Respo
       tier,
       used: used + 1,
       limit,
+      overage_billed: overageBilled || undefined,
     },
     cors,
   );
