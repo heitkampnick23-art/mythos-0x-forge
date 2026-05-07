@@ -15,6 +15,7 @@ import { AUP } from './components/legal/AUP';
 import { Marketplace as Heartbeat } from './components/heartbeat/Marketplace';
 import { CreateSoul } from './components/heartbeat/CreateSoul';
 import { SoulChat } from './components/heartbeat/SoulChat';
+import { VerdictPage } from './components/VerdictPage';
 import { useAuth } from './hooks/useAuth';
 
 type Route =
@@ -27,7 +28,8 @@ type Route =
   | '/aup'
   | '/agents'
   | '/agents/new'
-  | { kind: 'soul'; idOrSlug: string };
+  | { kind: 'soul'; idOrSlug: string }
+  | { kind: 'verdict'; slug: string };
 
 const STATIC_ROUTES = [
   '/', '/pricing', '/account', '/history', '/terms', '/privacy', '/aup',
@@ -37,8 +39,10 @@ const STATIC_ROUTES = [
 function currentRoute(): Route {
   const p = window.location.pathname;
   if ((STATIC_ROUTES as readonly string[]).includes(p)) return p as Route;
-  const m = p.match(/^\/agents\/([^/]+)$/);
-  if (m) return { kind: 'soul', idOrSlug: m[1] };
+  const soulMatch = p.match(/^\/agents\/([^/]+)$/);
+  if (soulMatch) return { kind: 'soul', idOrSlug: soulMatch[1] };
+  const verdictMatch = p.match(/^\/v\/([^/]+)$/);
+  if (verdictMatch) return { kind: 'verdict', slug: verdictMatch[1] };
   return '/';
 }
 
@@ -181,6 +185,14 @@ export default function App() {
           idOrSlug={route.idOrSlug}
           me={me}
           onBack={() => navigate('/agents')}
+          onUpgrade={() => navigate('/pricing')}
+        />
+      )}
+      {typeof route === 'object' && route.kind === 'verdict' && (
+        <VerdictPage
+          slug={route.slug}
+          me={me}
+          onBack={() => navigate('/')}
           onUpgrade={() => navigate('/pricing')}
         />
       )}

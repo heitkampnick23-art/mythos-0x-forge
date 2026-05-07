@@ -114,6 +114,56 @@ export async function listAnalyses(): Promise<AnalysisRow[]> {
   return r.analyses;
 }
 
+// -- verdict pages + PDF reports ---------------------------------------------
+
+export interface PublicVerdict {
+  slug: string;
+  kind: 'image' | 'video';
+  confidence: number;
+  verdict: 'authentic' | 'suspect' | 'synthetic';
+  modelTag: string;
+  durationMs: number;
+  sha256: string | null;
+  originalName: string | null;
+  findings: Array<{ category: string; title: string; detail: string; weight: number }>;
+  boxes: Array<{ x: number; y: number; width: number; height: number; label: string; severity: number }>;
+  public: boolean;
+  createdAt: number;
+  isOwner: boolean;
+  hasMedia: boolean;
+}
+
+export const fetchVerdict = (slug: string) => api<PublicVerdict>(`/v1/verdicts/${slug}`);
+
+export const verdictMediaUrl = (slug: string) => `${API_BASE}/v1/verdicts/${slug}/image`;
+
+/** Toggle public-share flag for an owner-only analysis. Returns the share URL. */
+export async function shareAnalysis(analysisId: string, isPublic: boolean): Promise<string | null> {
+  const r = await api<{ ok: true; public: boolean; slug: string | null; url: string | null }>(
+    `/v1/analyses/${analysisId}/share`,
+    { method: 'POST', body: JSON.stringify({ public: isPublic }) },
+  );
+  return r.url;
+}
+
+/** Trigger PDF download. Pro+ tier required. */
+export async function downloadVerdictPdf(slug: string): Promise<void> {
+  const res = await fetch(`${API_BASE}/v1/verdicts/${slug}/pdf`, { credentials: 'include' });
+  if (!res.ok) {
+    const detail = await res.text().catch(() => '');
+    throw Object.assign(new Error(`pdf ${res.status}`), { status: res.status, detail });
+  }
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `mythos-verdict-${slug}.pdf`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 5000);
+}
+
 /**
  * Stream the verdict as an audio blob via ElevenLabs. Pro+ tier only.
  * Returns an object URL the caller is responsible for revoking.

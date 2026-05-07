@@ -42,6 +42,15 @@ export interface AnalysisResult {
   durationMs: number;
   boxes: BoundingBox[];
   findings: Finding[];
+  /** Database ID — used to toggle the public-share flag. */
+  analysisId?: string;
+  /** Stable slug for the public verdict page + PDF filename. */
+  shareSlug?: string;
+  /** SHA-256 of the uploaded bytes, shown in the PDF for tamper-evidence. */
+  sha256?: string;
+  tier?: 'free' | 'pro' | 'max';
+  used?: number;
+  limit?: number;
 }
 
 export interface AnalyzeOptions {

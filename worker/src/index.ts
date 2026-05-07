@@ -49,6 +49,7 @@ import {
   speakText,
 } from './souls';
 import { chargeCost, getBudget } from './budget';
+import { canView, loadBySlug, publicPayload, renderPdf, streamMedia } from './verdicts';
 
 const MAX_IMAGE = 20 * 1024 * 1024;
 const MAX_VIDEO = 50 * 1024 * 1024;
@@ -79,6 +80,21 @@ export default {
         return await analyze(req, env, cors);
       if (url.pathname === '/v1/voice/verdict' && req.method === 'POST')
         return await voiceVerdict(req, env, cors);
+
+      // Public verdict pages + PDF reports
+      const verdictMatch = url.pathname.match(/^\/v1\/verdicts\/([^/]+)(?:\/([a-z]+))?$/);
+      if (verdictMatch) {
+        const [, slug, action] = verdictMatch;
+        if (!action && req.method === 'GET') return await getVerdict(req, env, cors, slug);
+        if (action === 'image' && req.method === 'GET')
+          return await getVerdictMedia(req, env, cors, slug);
+        if (action === 'pdf' && req.method === 'GET')
+          return await getVerdictPdf(req, env, cors, slug);
+      }
+      const shareMatch = url.pathname.match(/^\/v1\/analyses\/([^/]+)\/share$/);
+      if (shareMatch && req.method === 'POST') {
+        return await toggleShare(req, env, cors, shareMatch[1]);
+      }
 
       // Heartbeat / Souls
       if (url.pathname === '/v1/souls/voices' && req.method === 'GET')
@@ -293,24 +309,37 @@ async function analyze(req: Request, env: Env, cors: HeadersInit): Promise<Respo
     );
   }
 
-  // R2 cache (used for verdict pages later; non-blocking metadata)
+  // Read once, hash + R2 put + Sightengine all share the same File object.
+  // (File.stream() can be re-consumed for sub-streams; arrayBuffer() once for hash.)
+  const buf = await file.arrayBuffer();
+  const hashBuf = await crypto.subtle.digest('SHA-256', buf);
+  const sha256 = Array.from(new Uint8Array(hashBuf))
+    .map((b) => b.toString(16).padStart(2, '0'))
+    .join('');
+
   const objectKey = `analyses/${crypto.randomUUID()}-${safeName(file.name)}`;
-  await env.MEDIA.put(objectKey, file.stream(), {
+  await env.MEDIA.put(objectKey, buf, {
     httpMetadata: { contentType: file.type },
-    customMetadata: { kind: v.kind, originalName: file.name },
+    customMetadata: { kind: v.kind, originalName: file.name, sha256 },
   });
 
+  // Re-create File for the detection pipeline since arrayBuffer consumed the stream
+  const fileForDetect = new File([buf], file.name, { type: file.type });
+
   // Detect + narrate (cost-instrumented)
-  const result: AnalysisResult = await runDetection(file, v.kind, env, identity);
+  const result: AnalysisResult = await runDetection(fileForDetect, v.kind, env, identity);
   result.durationMs = Date.now() - start;
 
-  // Persist + increment counter
+  // Persist full state so the verdict survives as a sharable record + PDF.
   const analysisId = randomToken(12);
+  const shareSlug = randomToken(6); // 12 hex chars, plenty of entropy
   const now = Math.floor(Date.now() / 1000);
   await env.DB.batch([
     env.DB.prepare(
-      `INSERT INTO analyses (id, user_id, identity, kind, confidence, verdict, model_tag, duration_ms, r2_key, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO analyses
+         (id, user_id, identity, kind, confidence, verdict, model_tag, duration_ms,
+          r2_key, share_slug, public, sha256, findings_json, boxes_json, original_name, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?)`,
     ).bind(
       analysisId,
       user?.id ?? null,
@@ -321,6 +350,11 @@ async function analyze(req: Request, env: Env, cors: HeadersInit): Promise<Respo
       result.modelTag,
       result.durationMs,
       objectKey,
+      shareSlug,
+      sha256,
+      JSON.stringify(result.findings),
+      JSON.stringify(result.boxes),
+      file.name,
       now,
     ),
     env.DB.prepare(
@@ -333,6 +367,8 @@ async function analyze(req: Request, env: Env, cors: HeadersInit): Promise<Respo
     {
       ...result,
       analysisId,
+      shareSlug,
+      sha256,
       tier,
       used: used + 1,
       limit,
@@ -727,6 +763,88 @@ async function markSubscriptionCanceled(env: Env, sub: StripeSubscription): Prom
   )
     .bind(sub.customer)
     .run();
+}
+
+// -- verdict handlers ---------------------------------------------------------
+
+async function getVerdict(req: Request, env: Env, cors: HeadersInit, slug: string): Promise<Response> {
+  const row = await loadBySlug(env, slug);
+  if (!row) return json({ error: 'not_found' }, cors, 404);
+  const token = readSessionCookie(req);
+  const user = token ? await lookupSession(env, token) : null;
+  if (!canView(row, user)) return json({ error: 'private_verdict' }, cors, 403);
+  return json(publicPayload(row, user?.id === row.user_id), cors);
+}
+
+async function getVerdictMedia(
+  req: Request,
+  env: Env,
+  cors: HeadersInit,
+  slug: string,
+): Promise<Response> {
+  const row = await loadBySlug(env, slug);
+  if (!row) return json({ error: 'not_found' }, cors, 404);
+  const token = readSessionCookie(req);
+  const user = token ? await lookupSession(env, token) : null;
+  if (!canView(row, user)) return json({ error: 'private_verdict' }, cors, 403);
+  return await streamMedia(env, row, cors);
+}
+
+async function getVerdictPdf(
+  req: Request,
+  env: Env,
+  cors: HeadersInit,
+  slug: string,
+): Promise<Response> {
+  const row = await loadBySlug(env, slug);
+  if (!row) return json({ error: 'not_found' }, cors, 404);
+  const token = readSessionCookie(req);
+  const user = token ? await lookupSession(env, token) : null;
+  if (!user) return json({ error: 'auth_required' }, cors, 401);
+  if (!canView(row, user)) return json({ error: 'private_verdict' }, cors, 403);
+  const tier = await tierForUser(env, user.id);
+  if (tier === 'free') {
+    return json({ error: 'pdf_requires_pro', upgrade_url: `${env.SITE_URL}/pricing` }, cors, 402);
+  }
+  const bytes = await renderPdf(row, env);
+  const filename = `mythos-verdict-${row.share_slug ?? row.id}.pdf`;
+  const headers = new Headers(cors as HeadersInit);
+  headers.set('content-type', 'application/pdf');
+  headers.set('content-disposition', `attachment; filename="${filename}"`);
+  headers.set('cache-control', 'private, max-age=300');
+  return new Response(bytes, { status: 200, headers });
+}
+
+async function toggleShare(
+  req: Request,
+  env: Env,
+  cors: HeadersInit,
+  analysisId: string,
+): Promise<Response> {
+  const token = readSessionCookie(req);
+  const user = token ? await lookupSession(env, token) : null;
+  if (!user) return json({ error: 'auth_required' }, cors, 401);
+  const body = (await req.json().catch(() => ({}))) as { public?: boolean };
+  const wantPublic = body.public ? 1 : 0;
+  const row = await env.DB.prepare(
+    'SELECT user_id, share_slug FROM analyses WHERE id = ?',
+  )
+    .bind(analysisId)
+    .first<{ user_id: string | null; share_slug: string | null }>();
+  if (!row) return json({ error: 'not_found' }, cors, 404);
+  if (row.user_id !== user.id) return json({ error: 'forbidden' }, cors, 403);
+  await env.DB.prepare('UPDATE analyses SET public = ? WHERE id = ?')
+    .bind(wantPublic, analysisId)
+    .run();
+  return json(
+    {
+      ok: true,
+      public: !!wantPublic,
+      slug: row.share_slug,
+      url: row.share_slug ? `${env.SITE_URL}/v/${row.share_slug}` : null,
+    },
+    cors,
+  );
 }
 
 // -- souls handlers -----------------------------------------------------------
