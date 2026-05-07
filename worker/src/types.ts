@@ -24,6 +24,9 @@ export interface Env {
   ELEVENLABS_API_KEY?: string;
   /** Slack/Discord webhook URL for anomaly alerts (cron-driven). */
   ALERT_WEBHOOK_URL?: string;
+  /** Email address to send alerts to (uses Resend). When set + RESEND_API_KEY
+   *  configured, alerts are emailed in addition to (or instead of) any webhook. */
+  ALERT_EMAIL?: string;
 }
 
 export type Tier = 'free' | 'pro' | 'max';
