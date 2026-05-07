@@ -16,6 +16,7 @@ import { Marketplace as Heartbeat } from './components/heartbeat/Marketplace';
 import { CreateSoul } from './components/heartbeat/CreateSoul';
 import { SoulChat } from './components/heartbeat/SoulChat';
 import { VerdictPage } from './components/VerdictPage';
+import { Batch } from './components/Batch';
 import { useAuth } from './hooks/useAuth';
 
 type Route =
@@ -28,12 +29,13 @@ type Route =
   | '/aup'
   | '/agents'
   | '/agents/new'
+  | '/batch'
   | { kind: 'soul'; idOrSlug: string }
   | { kind: 'verdict'; slug: string };
 
 const STATIC_ROUTES = [
   '/', '/pricing', '/account', '/history', '/terms', '/privacy', '/aup',
-  '/agents', '/agents/new',
+  '/agents', '/agents/new', '/batch',
 ] as const;
 
 function currentRoute(): Route {
@@ -158,6 +160,7 @@ export default function App() {
         <Account me={me} onRefresh={refresh} onNavigate={navigate} />
       )}
       {route === '/history' && <History me={me} onNavigate={navigate} />}
+      {route === '/batch' && <Batch me={me} onNavigate={navigate} />}
       {route === '/terms' && <Terms onBack={() => navigate('/')} />}
       {route === '/privacy' && <Privacy onBack={() => navigate('/')} />}
       {route === '/aup' && <AUP onBack={() => navigate('/')} />}

@@ -146,6 +146,65 @@ export async function shareAnalysis(analysisId: string, isPublic: boolean): Prom
   return r.url;
 }
 
+// -- bulk URL batches --------------------------------------------------------
+
+export interface BatchJob {
+  id: string;
+  user_id: string;
+  total: number;
+  done: number;
+  failed: number;
+  status: 'queued' | 'processing' | 'done';
+  created_at: number;
+  completed_at: number | null;
+}
+
+export interface BatchItem {
+  id: string;
+  batch_id: string;
+  position: number;
+  url: string;
+  status: 'pending' | 'done' | 'failed';
+  analysis_id: string | null;
+  share_slug: string | null;
+  confidence: number | null;
+  verdict: 'authentic' | 'suspect' | 'synthetic' | null;
+  error: string | null;
+  created_at: number;
+  completed_at: number | null;
+}
+
+export async function createBatch(urls: string[]): Promise<{ batch_id: string; total: number }> {
+  return api<{ batch_id: string; total: number }>('/v1/batch', {
+    method: 'POST',
+    body: JSON.stringify({ urls }),
+  });
+}
+
+export const fetchBatch = (id: string) =>
+  api<{ job: BatchJob; items: BatchItem[] }>(`/v1/batch/${id}`);
+
+export const fetchMyBatches = () => api<{ jobs: BatchJob[] }>('/v1/batch').then((r) => r.jobs);
+
+export function downloadBatchCsv(id: string): void {
+  // Anchor with credentials is tricky; just fetch + blob
+  fetch(`${API_BASE}/v1/batch/${id}/csv`, { credentials: 'include' })
+    .then((res) => {
+      if (!res.ok) throw new Error(`csv ${res.status}`);
+      return res.blob();
+    })
+    .then((blob) => {
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `mythos-batch-${id}.csv`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(url), 5000);
+    });
+}
+
 /** Trigger PDF download. Pro+ tier required. */
 export async function downloadVerdictPdf(slug: string): Promise<void> {
   const res = await fetch(`${API_BASE}/v1/verdicts/${slug}/pdf`, { credentials: 'include' });

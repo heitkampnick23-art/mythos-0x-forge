@@ -55,6 +55,7 @@ import { embedScript } from './embed';
 import { deleteDoc, listDocs, uploadDoc } from './kb';
 import { isOverageEnabled, recordOverage, setupOverageInfra } from './overage';
 import { attachPhone, detachPhone, handleIncoming, handleRespond, handleTts } from './phone';
+import { batchCsv, createBatch, getBatchStatus, listBatches, processBatch } from './batch';
 
 const MAX_IMAGE = 20 * 1024 * 1024;
 const MAX_VIDEO = 50 * 1024 * 1024;
@@ -71,7 +72,7 @@ export default {
     ctx.waitUntil(runAlertsCheck(env).then((r) => console.log('alerts: posted', r.posted)));
   },
 
-  async fetch(req: Request, env: Env): Promise<Response> {
+  async fetch(req: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     buildPriceMap(env);
     const url = new URL(req.url);
     const cors = corsHeaders(env, req.headers.get('origin'), req);
@@ -83,6 +84,18 @@ export default {
     try {
       // Auth & app routes
       if (url.pathname === '/v1/health') return json({ ok: true, ts: Date.now() }, cors);
+      // Bulk URL batches (Max-only)
+      if (url.pathname === '/v1/batch' && req.method === 'POST')
+        return await batchCreate(req, env, cors, ctx);
+      if (url.pathname === '/v1/batch' && req.method === 'GET')
+        return await batchListMine(req, env, cors);
+      const batchMatch = url.pathname.match(/^\/v1\/batch\/([^/]+)(?:\/([a-z]+))?$/);
+      if (batchMatch) {
+        const [, id, action] = batchMatch;
+        if (!action && req.method === 'GET') return await batchGet(req, env, cors, id);
+        if (action === 'csv' && req.method === 'GET') return await batchCsvDl(req, env, cors, id);
+      }
+
       // Twilio voice (no auth — Twilio webhook hits us directly)
       if (url.pathname === '/v1/phone/incoming' && req.method === 'POST')
         return await handleIncoming(req, env);
@@ -859,6 +872,63 @@ async function markSubscriptionCanceled(env: Env, sub: StripeSubscription): Prom
   )
     .bind(sub.customer)
     .run();
+}
+
+// -- batch handlers -----------------------------------------------------------
+
+async function batchCreate(
+  req: Request,
+  env: Env,
+  cors: HeadersInit,
+  ctx: ExecutionContext,
+): Promise<Response> {
+  const token = readSessionCookie(req);
+  const user = token ? await lookupSession(env, token) : null;
+  if (!user) return json({ error: 'auth_required' }, cors, 401);
+  const tier = await tierForUser(env, user.id);
+  const body = (await req.json().catch(() => ({}))) as { urls?: string[] };
+  if (!Array.isArray(body.urls) || body.urls.length === 0) {
+    return json({ error: 'missing_urls' }, cors, 400);
+  }
+  const r = await createBatch(env, user, tier, body.urls);
+  if (!r.ok) return json({ error: r.error, upgrade_url: `${env.SITE_URL}/pricing` }, cors, r.status);
+  // Process in background so the user gets an immediate response with batch_id
+  ctx.waitUntil(processBatch(env, r.batchId));
+  return json({ batch_id: r.batchId, total: r.total }, cors);
+}
+
+async function batchListMine(req: Request, env: Env, cors: HeadersInit): Promise<Response> {
+  const token = readSessionCookie(req);
+  const user = token ? await lookupSession(env, token) : null;
+  if (!user) return json({ error: 'auth_required' }, cors, 401);
+  const jobs = await listBatches(env, user);
+  return json({ jobs }, cors);
+}
+
+async function batchGet(req: Request, env: Env, cors: HeadersInit, id: string): Promise<Response> {
+  const token = readSessionCookie(req);
+  const user = token ? await lookupSession(env, token) : null;
+  if (!user) return json({ error: 'auth_required' }, cors, 401);
+  const data = await getBatchStatus(env, user, id);
+  if (!data) return json({ error: 'not_found' }, cors, 404);
+  return json(data, cors);
+}
+
+async function batchCsvDl(
+  req: Request,
+  env: Env,
+  cors: HeadersInit,
+  id: string,
+): Promise<Response> {
+  const token = readSessionCookie(req);
+  const user = token ? await lookupSession(env, token) : null;
+  if (!user) return json({ error: 'auth_required' }, cors, 401);
+  const csv = await batchCsv(env, user, id);
+  if (csv === null) return json({ error: 'not_found' }, cors, 404);
+  const headers = new Headers(cors as HeadersInit);
+  headers.set('content-type', 'text/csv; charset=utf-8');
+  headers.set('content-disposition', `attachment; filename="mythos-batch-${id}.csv"`);
+  return new Response(csv, { status: 200, headers });
 }
 
 // -- KB handlers --------------------------------------------------------------

@@ -31,6 +31,7 @@ export function Footer({ onNavigate, authenticated }: Props) {
         <nav className="flex flex-wrap items-center justify-center gap-x-6 gap-y-3">
           {link('Forge', '/')}
           {link('Heartbeat', '/agents')}
+          {link('Bulk', '/batch')}
           {link('Pricing', '/pricing')}
           {authenticated && link('History', '/history')}
           {authenticated && link('Account', '/account')}
