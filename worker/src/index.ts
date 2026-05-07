@@ -61,6 +61,8 @@ export default {
         return await listAnalyses(req, env, cors);
       if (url.pathname === '/v1/analyze' && req.method === 'POST')
         return await analyze(req, env, cors);
+      if (url.pathname === '/v1/voice/verdict' && req.method === 'POST')
+        return await voiceVerdict(req, env, cors);
 
       // Billing
       if (url.pathname === '/v1/checkout' && req.method === 'POST')
@@ -191,6 +193,89 @@ async function analyze(req: Request, env: Env, cors: HeadersInit): Promise<Respo
     cors,
   );
 }
+
+// -- voice (TTS, Pro+ only) ---------------------------------------------------
+
+async function voiceVerdict(req: Request, env: Env, cors: HeadersInit): Promise<Response> {
+  if (!env.ELEVENLABS_API_KEY) return json({ error: 'tts_not_configured' }, cors, 503);
+
+  const token = readSessionCookie(req);
+  const user = token ? await lookupSession(env, token) : null;
+  if (!user) return json({ error: 'auth_required' }, cors, 401);
+
+  const tier = await tierForUser(env, user.id);
+  if (tier === 'free') {
+    return json({ error: 'voice_requires_pro', upgrade_url: `${env.SITE_URL}/pricing` }, cors, 402);
+  }
+
+  const body = (await req.json().catch(() => ({}))) as {
+    confidence?: number;
+    verdict?: string;
+    findings?: Array<{ category: string; title: string; detail: string }>;
+  };
+  if (typeof body.confidence !== 'number' || !body.verdict) {
+    return json({ error: 'missing_fields' }, cors, 400);
+  }
+
+  const script = composeScript(body);
+  // Voice IDs: Adam (deep, authoritative) for Max; Rachel (composed, neutral)
+  // for Pro. Falls back if voice unavailable.
+  const voiceId = tier === 'max' ? 'pNInz6obpgDQGcFmaJgB' : '21m00Tcm4TlvDq8ikWAM';
+
+  const ttsRes = await fetch(
+    `https://api.elevenlabs.io/v1/text-to-speech/${voiceId}/stream?output_format=mp3_44100_128`,
+    {
+      method: 'POST',
+      headers: {
+        'xi-api-key': env.ELEVENLABS_API_KEY,
+        'Content-Type': 'application/json',
+        Accept: 'audio/mpeg',
+      },
+      body: JSON.stringify({
+        text: script,
+        model_id: 'eleven_turbo_v2_5',
+        voice_settings: { stability: 0.55, similarity_boost: 0.75, style: 0.4, use_speaker_boost: true },
+      }),
+    },
+  );
+  if (!ttsRes.ok) {
+    const detail = await ttsRes.text().catch(() => '');
+    console.error('elevenlabs_failed', ttsRes.status, detail.slice(0, 200));
+    return json({ error: 'tts_failed', status: ttsRes.status }, cors, 502);
+  }
+
+  // Stream the MP3 back to the client
+  const headers = new Headers(cors as HeadersInit);
+  headers.set('content-type', 'audio/mpeg');
+  headers.set('cache-control', 'private, max-age=3600');
+  return new Response(ttsRes.body, { status: 200, headers });
+}
+
+function composeScript(body: {
+  confidence?: number;
+  verdict?: string;
+  findings?: Array<{ title: string; detail: string }>;
+}): string {
+  const pct = Math.round((body.confidence ?? 0) * 100);
+  const verdict = body.verdict ?? 'inconclusive';
+  const lead =
+    verdict === 'synthetic'
+      ? `Forensic analysis is conclusive. The Forge Eye reports ${pct} percent generative AI probability. The media is, with high confidence, synthetic.`
+      : verdict === 'suspect'
+      ? `The verdict is ambiguous. The Forge Eye reports ${pct} percent generative AI probability. Indicators are mixed; the media should be treated as suspect.`
+      : `Forensic analysis suggests authentic capture. The Forge Eye reports only ${pct} percent generative AI probability. No strong indicators of synthesis were detected.`;
+
+  // Pull two findings to ground the verdict
+  const top = (body.findings ?? []).slice(0, 2).map((f) => f.title);
+  const supporting =
+    top.length > 0
+      ? ` Supporting signals include: ${top.join('; ')}.`
+      : '';
+
+  return `${lead}${supporting} End of report.`;
+}
+
+// -----------------------------------------------------------------------------
 
 async function listAnalyses(req: Request, env: Env, cors: HeadersInit): Promise<Response> {
   const token = readSessionCookie(req);

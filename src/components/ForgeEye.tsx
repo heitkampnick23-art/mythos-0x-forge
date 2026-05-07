@@ -42,6 +42,11 @@ interface ForgeEyeProps {
   onModeChange: (m: 'idle' | 'scanning' | 'flagged') => void;
   /** fires when API returns 402 — used to navigate to /pricing */
   onPaywall?: (detail: { tier: string; used: number; limit: number; upgradeUrl: string }) => void;
+  /** auth context passed through to ResultsPanel for voice readout */
+  authenticated: boolean;
+  tier: 'free' | 'pro' | 'max';
+  onUpgrade: () => void;
+  onSignIn: () => void;
 }
 
 export interface ForgeEyeHandle {
@@ -52,7 +57,7 @@ export interface ForgeEyeHandle {
 }
 
 export const ForgeEye = forwardRef<ForgeEyeHandle, ForgeEyeProps>(function ForgeEye(
-  { state, setState, onError, onModeChange, onPaywall },
+  { state, setState, onError, onModeChange, onPaywall, authenticated, tier, onUpgrade, onSignIn },
   ref,
 ) {
   const inputRef = useRef<HTMLInputElement>(null);
@@ -185,7 +190,16 @@ export const ForgeEye = forwardRef<ForgeEyeHandle, ForgeEyeProps>(function Forge
       ) : (
         <div className="flex flex-col gap-6">
           <MediaPreview state={state} onReset={reset} onScan={startScan} />
-          {state.kind === 'results' && <ResultsPanel result={state.result} onReset={reset} />}
+          {state.kind === 'results' && (
+            <ResultsPanel
+              result={state.result}
+              onReset={reset}
+              tier={tier}
+              authenticated={authenticated}
+              onUpgrade={onUpgrade}
+              onSignIn={onSignIn}
+            />
+          )}
         </div>
       )}
     </section>

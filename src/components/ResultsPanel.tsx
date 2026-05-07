@@ -1,13 +1,26 @@
 import type { AnalysisResult, Finding } from '../lib/analyzeMedia';
+import type { Tier } from '../lib/api';
 import { GlassPanel } from './glass';
 import { ConfidenceMeter } from './ConfidenceMeter';
+import { VoiceReadout } from './VoiceReadout';
 
 interface Props {
   result: AnalysisResult;
   onReset: () => void;
+  tier: Tier;
+  authenticated: boolean;
+  onUpgrade: () => void;
+  onSignIn: () => void;
 }
 
-export function ResultsPanel({ result, onReset }: Props) {
+export function ResultsPanel({
+  result,
+  onReset,
+  tier,
+  authenticated,
+  onUpgrade,
+  onSignIn,
+}: Props) {
   return (
     <div className="flex w-full flex-col gap-4">
       <GlassPanel
@@ -18,13 +31,22 @@ export function ResultsPanel({ result, onReset }: Props) {
       >
         <div className="flex flex-col items-start justify-between gap-6 sm:flex-row sm:items-center">
           <ConfidenceMeter result={result} />
-          <button
-            type="button"
-            onClick={onReset}
-            className="self-end rounded-full border border-white/10 bg-white/[0.03] px-4 py-2 text-[10px] uppercase tracking-[0.28em] text-white/60 transition hover:border-ember-fire/40 hover:bg-ember-fire/[0.08] hover:text-white"
-          >
-            New Analysis
-          </button>
+          <div className="flex flex-col items-end gap-2">
+            <VoiceReadout
+              result={result}
+              tier={tier}
+              authenticated={authenticated}
+              onUpgrade={onUpgrade}
+              onSignIn={onSignIn}
+            />
+            <button
+              type="button"
+              onClick={onReset}
+              className="rounded-full border border-white/10 bg-white/[0.03] px-4 py-2 text-[10px] uppercase tracking-[0.28em] text-white/60 transition hover:border-ember-fire/40 hover:bg-ember-fire/[0.08] hover:text-white"
+            >
+              New Analysis
+            </button>
+          </div>
         </div>
       </GlassPanel>
 

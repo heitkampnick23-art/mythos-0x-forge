@@ -29,6 +29,7 @@ export default function App() {
   const [emberMode, setEmberMode] = useState<EmberMode>('idle');
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
   const forgeRef = useRef<ForgeEyeHandle>(null);
+  const [signInOpen, setSignInOpen] = useState(false);
   const { me, refresh } = useAuth();
 
   useEffect(() => {
@@ -95,7 +96,13 @@ export default function App() {
         <EmberField mode={emberMode} />
       </div>
 
-      <AuthBar me={me} onRefresh={refresh} onNavigate={navigate} />
+      <AuthBar
+        me={me}
+        onRefresh={refresh}
+        onNavigate={navigate}
+        forceSignInOpen={signInOpen}
+        onSignInClose={() => setSignInOpen(false)}
+      />
 
       {route === '/' && (
         <>
@@ -106,6 +113,10 @@ export default function App() {
             setState={setState}
             onError={(msg) => pushToast(msg, 'error')}
             onModeChange={setEmberMode}
+            authenticated={!!me?.authenticated}
+            tier={me?.user?.tier ?? 'free'}
+            onUpgrade={() => navigate('/pricing')}
+            onSignIn={() => setSignInOpen(true)}
             onPaywall={(detail) => {
               pushToast(
                 `${detail.tier === 'free' ? 'Free' : detail.tier} tier limit reached (${detail.used}/${detail.limit}). Upgrade for more.`,

@@ -20,6 +20,8 @@ export interface Env {
    *  mythos0x.com is verified in Resend. Set to "Mythos 0X Forge <auth@mythos0x.com>"
    *  via wrangler secret put RESEND_FROM once verified. */
   RESEND_FROM?: string;
+  /** ElevenLabs TTS for verdict readout (Pro+ feature). */
+  ELEVENLABS_API_KEY?: string;
 }
 
 export type Tier = 'free' | 'pro' | 'max';

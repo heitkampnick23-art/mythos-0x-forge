@@ -77,6 +77,29 @@ export async function listAnalyses(): Promise<AnalysisRow[]> {
   return r.analyses;
 }
 
+/**
+ * Stream the verdict as an audio blob via ElevenLabs. Pro+ tier only.
+ * Returns an object URL the caller is responsible for revoking.
+ */
+export async function fetchVerdictAudio(payload: {
+  confidence: number;
+  verdict: string;
+  findings: Array<{ category: string; title: string; detail: string; weight: number }>;
+}): Promise<string> {
+  const res = await fetch(`${API_BASE}/v1/voice/verdict`, {
+    method: 'POST',
+    credentials: 'include',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) {
+    const detail = await res.text().catch(() => '');
+    throw Object.assign(new Error(`voice ${res.status}`), { status: res.status, detail });
+  }
+  const blob = await res.blob();
+  return URL.createObjectURL(blob);
+}
+
 // Pricing — kept in sync with Worker's wrangler.toml vars
 export const PRICES = {
   pro: {

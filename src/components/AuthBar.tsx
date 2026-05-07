@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { logout, sendMagicLink, type MeResponse } from '../lib/api';
 import { GlassPanel } from './glass';
 
@@ -6,10 +6,22 @@ interface Props {
   me: MeResponse | null;
   onRefresh: () => void;
   onNavigate: (path: '/' | '/pricing' | '/account') => void;
+  forceSignInOpen?: boolean;
+  onSignInClose?: () => void;
 }
 
-export function AuthBar({ me, onRefresh, onNavigate }: Props) {
+export function AuthBar({ me, onRefresh, onNavigate, forceSignInOpen, onSignInClose }: Props) {
   const [open, setOpen] = useState(false);
+
+  // Allow parents to programmatically open the sign-in modal
+  useEffect(() => {
+    if (forceSignInOpen) setOpen(true);
+  }, [forceSignInOpen]);
+
+  const close = () => {
+    setOpen(false);
+    onSignInClose?.();
+  };
 
   return (
     <div className="pointer-events-none fixed right-4 top-4 z-40 flex items-center gap-2 sm:right-6 sm:top-6">
@@ -50,9 +62,9 @@ export function AuthBar({ me, onRefresh, onNavigate }: Props) {
 
       {open && (
         <SignInModal
-          onClose={() => setOpen(false)}
+          onClose={close}
           onSent={() => {
-            setOpen(false);
+            close();
             void onRefresh();
           }}
         />
