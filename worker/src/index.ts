@@ -51,6 +51,7 @@ import {
 import { chargeCost, getBudget } from './budget';
 import { canView, loadBySlug, publicPayload, renderPdf, streamMedia } from './verdicts';
 import { runAlertsCheck } from './alerts';
+import { runWeeklyDigest } from './digest';
 import { embedScript } from './embed';
 import { deleteDoc, listDocs, uploadDoc } from './kb';
 import { isOverageEnabled, recordOverage, setupOverageInfra } from './overage';
@@ -75,12 +76,21 @@ const IMAGE_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp']);
 const VIDEO_TYPES = new Set(['video/mp4', 'video/webm']);
 
 export default {
-  /** Cron trigger — Cloudflare Workers fires this on the schedule defined in
-   *  wrangler.toml [triggers] crons. Currently runs hourly to scan for cost
-   *  anomalies and new subs, posting to ALERT_WEBHOOK_URL when it finds
-   *  anything noteworthy. */
-  async scheduled(_event: ScheduledEvent, env: Env, ctx: ExecutionContext): Promise<void> {
+  /** Cron trigger — Cloudflare Workers fires this on the schedules defined
+   *  in wrangler.toml. Discriminate by event.cron:
+   *    "0 * * * *"    → hourly anomaly alerts
+   *    "0 14 * * 1"   → weekly digest emails
+   */
+  async scheduled(event: ScheduledEvent, env: Env, ctx: ExecutionContext): Promise<void> {
     buildPriceMap(env);
+    if (event.cron === '0 14 * * 1') {
+      ctx.waitUntil(
+        runWeeklyDigest(env).then((r) =>
+          console.log('digest: sent', r.sent, 'skipped', r.skipped, 'failed', r.failed),
+        ),
+      );
+      return;
+    }
     ctx.waitUntil(runAlertsCheck(env).then((r) => console.log('alerts: posted', r.posted)));
   },
 
@@ -150,6 +160,15 @@ export default {
       }
       // Manual alert-check trigger (for testing the webhook integration).
       // Auth-gated to Max only so randoms can't spam your Slack.
+      if (url.pathname === '/v1/admin/digest-send' && req.method === 'POST') {
+        const token = readSessionCookie(req);
+        const user = token ? await lookupSession(env, token) : null;
+        if (!user) return json({ error: 'auth_required' }, cors, 401);
+        const tier = await tierForUser(env, user.id);
+        if (tier !== 'max') return json({ error: 'forbidden' }, cors, 403);
+        const r = await runWeeklyDigest(env);
+        return json(r, cors);
+      }
       if (url.pathname === '/v1/admin/alerts-check' && req.method === 'POST') {
         const token = readSessionCookie(req);
         const user = token ? await lookupSession(env, token) : null;

@@ -29,10 +29,11 @@ index_name = "mythos-soul-kb"
 [ai]
 binding = "AI"
 
-# Hourly anomaly-alert cron — checks user_budget_daily + new subs and posts
-# to ALERT_WEBHOOK_URL when something interesting happens.
+# Cron triggers:
+#   "0 * * * *"    — hourly anomaly alerts (budget caps, new subs)
+#   "0 14 * * 1"   — weekly digest emails, Mon 14:00 UTC (9am ET)
 [triggers]
-crons = ["0 * * * *"]
+crons = ["0 * * * *", "0 14 * * 1"]
 
 # Vars (non-secret).
 [vars]

@@ -19,6 +19,7 @@ import { VerdictPage } from './components/VerdictPage';
 import { Batch } from './components/Batch';
 import { ForAttorneys } from './components/ForAttorneys';
 import { Feed } from './components/Feed';
+import { Onboarding } from './components/Onboarding';
 import { RecentVerdicts } from './components/RecentVerdicts';
 import { useAuth } from './hooks/useAuth';
 
@@ -60,6 +61,7 @@ export default function App() {
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
   const forgeRef = useRef<ForgeEyeHandle>(null);
   const [signInOpen, setSignInOpen] = useState(false);
+  const [welcomeOpen, setWelcomeOpen] = useState(false);
   const { me, refresh } = useAuth();
 
   useEffect(() => {
@@ -96,6 +98,25 @@ export default function App() {
       const qs = params.toString();
       const next = window.location.pathname + (qs ? `?${qs}` : '') + window.location.hash;
       window.history.replaceState(null, '', next);
+    }
+  }, []);
+
+  // First-run onboarding: shown once per browser, or any time via ?welcome=1.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('welcome') === '1') {
+      setWelcomeOpen(true);
+      return;
+    }
+    try {
+      const seen = localStorage.getItem('mfr_seen_welcome');
+      if (!seen && window.location.pathname === '/') {
+        // Defer briefly so the hero animates in first
+        const t = setTimeout(() => setWelcomeOpen(true), 1200);
+        return () => clearTimeout(t);
+      }
+    } catch {
+      /* localStorage may be blocked */
     }
   }, []);
 
@@ -221,6 +242,16 @@ export default function App() {
           me={me}
           onBack={() => navigate('/')}
           onUpgrade={() => navigate('/pricing')}
+        />
+      )}
+
+      {welcomeOpen && (
+        <Onboarding
+          onClose={() => setWelcomeOpen(false)}
+          onSignUp={() => {
+            setWelcomeOpen(false);
+            setSignInOpen(true);
+          }}
         />
       )}
 

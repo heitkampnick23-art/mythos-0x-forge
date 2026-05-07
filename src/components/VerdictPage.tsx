@@ -30,6 +30,7 @@ export function VerdictPage({ slug, me, onBack, onUpgrade }: Props) {
   const [err, setErr] = useState<string | null>(null);
   const [pdfState, setPdfState] = useState<'idle' | 'loading' | 'err'>('idle');
   const [copied, setCopied] = useState(false);
+  const [embedCopied, setEmbedCopied] = useState(false);
 
   useEffect(() => {
     fetchVerdict(slug)
@@ -194,6 +195,20 @@ export function VerdictPage({ slug, me, onBack, onUpgrade }: Props) {
           >
             {copied ? 'Link copied' : 'Copy link'}
           </button>
+          {verdict.public && (
+            <button
+              type="button"
+              onClick={() => {
+                const code = `<iframe src="https://mythos0x.com/embed/v/${verdict.slug}" width="480" height="240" frameborder="0" style="border:0;border-radius:12px"></iframe>`;
+                navigator.clipboard.writeText(code).catch(() => undefined);
+                setEmbedCopied(true);
+                setTimeout(() => setEmbedCopied(false), 2500);
+              }}
+              className="rounded-full border border-white/10 bg-white/[0.04] px-4 py-2 text-[10px] uppercase tracking-[0.28em] text-white/65 transition hover:border-ember-gold/40 hover:text-white"
+            >
+              {embedCopied ? 'Embed copied' : 'Copy embed'}
+            </button>
+          )}
           <button
             type="button"
             onClick={downloadPdf}
