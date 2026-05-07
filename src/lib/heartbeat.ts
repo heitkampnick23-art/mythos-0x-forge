@@ -80,6 +80,41 @@ export const sendSoulMessage = (
     body: JSON.stringify({ message, session_id: sessionId }),
   });
 
+// -- knowledge base ----------------------------------------------------------
+
+export interface KbDoc {
+  id: string;
+  soul_id: string;
+  filename: string;
+  content_type: string;
+  size_bytes: number;
+  status: 'processing' | 'indexed' | 'failed';
+  chunk_count: number;
+  created_at: number;
+}
+
+export const fetchKbDocs = (idOrSlug: string) =>
+  api<{ docs: KbDoc[] }>(`/v1/souls/${idOrSlug}/kb`).then((r) => r.docs);
+
+export async function uploadKbDoc(idOrSlug: string, file: File): Promise<KbDoc> {
+  const form = new FormData();
+  form.append('file', file);
+  const res = await fetch(`${API_BASE}/v1/souls/${idOrSlug}/kb`, {
+    method: 'POST',
+    credentials: 'include',
+    body: form,
+  });
+  if (!res.ok) {
+    const detail = await res.text().catch(() => '');
+    throw Object.assign(new Error(`kb_upload ${res.status}`), { status: res.status, detail });
+  }
+  const data = (await res.json()) as { doc: KbDoc };
+  return data.doc;
+}
+
+export const deleteKbDoc = (idOrSlug: string, docId: string) =>
+  api<{ ok: boolean }>(`/v1/souls/${idOrSlug}/kb/${docId}`, { method: 'DELETE' });
+
 /** Returns an object URL for the streamed MP3. Caller must revoke. */
 export async function speakSoulText(idOrSlug: string, text: string): Promise<string> {
   const res = await fetch(`${API_BASE}/v1/souls/${idOrSlug}/speak`, {

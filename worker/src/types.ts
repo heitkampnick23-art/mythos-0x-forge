@@ -1,6 +1,8 @@
 export interface Env {
   MEDIA: R2Bucket;
   DB: D1Database;
+  VECTORIZE: VectorizeIndex;
+  AI: Ai;
   ALLOWED_ORIGIN: string;
   ENABLE_MOCK_FALLBACK: string;
   SITE_URL: string;

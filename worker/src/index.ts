@@ -52,6 +52,7 @@ import { chargeCost, getBudget } from './budget';
 import { canView, loadBySlug, publicPayload, renderPdf, streamMedia } from './verdicts';
 import { runAlertsCheck } from './alerts';
 import { embedScript } from './embed';
+import { deleteDoc, listDocs, uploadDoc } from './kb';
 
 const MAX_IMAGE = 20 * 1024 * 1024;
 const MAX_VIDEO = 50 * 1024 * 1024;
@@ -138,6 +139,15 @@ export default {
         return await soulsMine(req, env, cors);
       if (url.pathname === '/v1/souls' && req.method === 'POST')
         return await soulsCreate(req, env, cors);
+      // KB endpoints (more specific than the generic soul match below).
+      const kbMatch = url.pathname.match(/^\/v1\/souls\/([^/]+)\/kb(?:\/([^/]+))?$/);
+      if (kbMatch) {
+        const [, idOrSlug, docId] = kbMatch;
+        if (!docId && req.method === 'GET') return await kbList(req, env, cors, idOrSlug);
+        if (!docId && req.method === 'POST') return await kbUpload(req, env, cors, idOrSlug);
+        if (docId && req.method === 'DELETE')
+          return await kbDelete(req, env, cors, idOrSlug, docId);
+      }
       const soulMatch = url.pathname.match(/^\/v1\/souls\/([^/]+)(?:\/([a-z]+))?$/);
       if (soulMatch) {
         const [, idOrSlug, action] = soulMatch;
@@ -796,6 +806,44 @@ async function markSubscriptionCanceled(env: Env, sub: StripeSubscription): Prom
   )
     .bind(sub.customer)
     .run();
+}
+
+// -- KB handlers --------------------------------------------------------------
+
+async function kbList(req: Request, env: Env, cors: HeadersInit, idOrSlug: string): Promise<Response> {
+  const token = readSessionCookie(req);
+  const user = token ? await lookupSession(env, token) : null;
+  if (!user) return json({ error: 'auth_required' }, cors, 401);
+  const docs = await listDocs(env, user, idOrSlug);
+  return json({ docs }, cors);
+}
+
+async function kbUpload(req: Request, env: Env, cors: HeadersInit, idOrSlug: string): Promise<Response> {
+  const token = readSessionCookie(req);
+  const user = token ? await lookupSession(env, token) : null;
+  if (!user) return json({ error: 'auth_required' }, cors, 401);
+  const tier = await tierForUser(env, user.id);
+  const form = await req.formData();
+  const entry = form.get('file');
+  if (!entry || typeof entry === 'string') return json({ error: 'missing_file' }, cors, 400);
+  const file = entry as File;
+  const r = await uploadDoc(env, user, tier, idOrSlug, file);
+  if (!r.ok) return json({ error: r.error, upgrade_url: `${env.SITE_URL}/pricing` }, cors, r.status);
+  return json({ doc: r.doc }, cors);
+}
+
+async function kbDelete(
+  req: Request,
+  env: Env,
+  cors: HeadersInit,
+  idOrSlug: string,
+  docId: string,
+): Promise<Response> {
+  const token = readSessionCookie(req);
+  const user = token ? await lookupSession(env, token) : null;
+  if (!user) return json({ error: 'auth_required' }, cors, 401);
+  const ok = await deleteDoc(env, user, idOrSlug, docId);
+  return json({ ok }, cors, ok ? 200 : 404);
 }
 
 // -- verdict handlers ---------------------------------------------------------

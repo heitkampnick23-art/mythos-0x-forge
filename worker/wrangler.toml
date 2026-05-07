@@ -20,6 +20,15 @@ binding = "DB"
 database_name = "mythos-forge"
 database_id = "117161cf-7312-43be-b20c-02e6bf50a368"
 
+# Vectorize index for Soul knowledge-base retrieval (RAG)
+[[vectorize]]
+binding = "VECTORIZE"
+index_name = "mythos-soul-kb"
+
+# Workers AI for embeddings (BGE base, 768 dims)
+[ai]
+binding = "AI"
+
 # Hourly anomaly-alert cron — checks user_budget_daily + new subs and posts
 # to ALERT_WEBHOOK_URL when something interesting happens.
 [triggers]

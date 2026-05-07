@@ -11,6 +11,7 @@
 import type { Env, Tier, User } from './types';
 import { randomToken } from './auth';
 import { chargeCost, estimateTokens, getBudget } from './budget';
+import { retrieveContext } from './kb';
 
 export const VOICES = [
   { id: 'pNInz6obpgDQGcFmaJgB', label: 'Adam', desc: 'deep, authoritative' },
@@ -235,7 +236,7 @@ export async function chat(
   soulIdOrSlug: string,
   userMessage: string,
   sessionId: string,
-): Promise<{ ok: true; reply: string; messageId: string } | { ok: false; error: string; status: number; meta?: unknown }> {
+): Promise<{ ok: true; reply: string; messageId: string; sources?: string[] } | { ok: false; error: string; status: number; meta?: unknown }> {
   if (!env.ANTHROPIC_API_KEY) return { ok: false, error: 'llm_not_configured', status: 503 };
   if (!userMessage.trim()) return { ok: false, error: 'empty_message', status: 400 };
 
@@ -287,6 +288,24 @@ export async function chat(
 
   const messages = [...(history.results ?? []), { role: 'user' as const, content: userMessage.slice(0, 4000) }];
 
+  // RAG: retrieve relevant KB chunks for this Soul, prepend to system prompt
+  let systemPrompt = soul.system_prompt;
+  let ragSources: string[] = [];
+  try {
+    const ctx = await retrieveContext(env, soul.id, userMessage);
+    if (ctx) {
+      systemPrompt =
+        soul.system_prompt +
+        '\n\n--- KNOWLEDGE BASE (cite when relevant) ---\n' +
+        ctx.context +
+        '\n--- END KNOWLEDGE BASE ---\n\n' +
+        'Use the knowledge above when it directly answers the user. If it does not, ignore it and reply from your own persona.';
+      ragSources = ctx.sources;
+    }
+  } catch (e) {
+    console.error('rag_failed', (e as Error).message);
+  }
+
   // Call Anthropic
   const anthRes = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
@@ -298,7 +317,7 @@ export async function chat(
     body: JSON.stringify({
       model: 'claude-haiku-4-5-20251001',
       max_tokens: 600,
-      system: soul.system_prompt,
+      system: systemPrompt,
       messages,
     }),
   });
@@ -338,7 +357,7 @@ export async function chat(
     env.DB.prepare('UPDATE souls SET chat_count = chat_count + 1 WHERE id = ?').bind(soul.id),
   ]);
 
-  return { ok: true, reply, messageId: assistantMsgId };
+  return { ok: true, reply, messageId: assistantMsgId, sources: ragSources };
 }
 
 // -- TTS streaming ------------------------------------------------------------

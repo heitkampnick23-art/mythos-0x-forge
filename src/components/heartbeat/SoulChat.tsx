@@ -11,6 +11,7 @@ import {
 import type { MeResponse } from '../../lib/api';
 import { GlassPanel } from '../glass';
 import { useVoiceCommands } from '../../hooks/useVoiceCommands';
+import { KbPanel } from './KbPanel';
 
 interface Props {
   idOrSlug: string;
@@ -238,6 +239,8 @@ export function SoulChat({ idOrSlug, me, onBack, onUpgrade }: Props) {
           {soul.voice_label}
         </div>
       </div>
+
+      {owned && <KbPanel soulIdOrSlug={idOrSlug} onUpgrade={onUpgrade} />}
 
       <div className="mb-3 flex items-center justify-end gap-3">
         <label className="flex items-center gap-2 font-mono text-[10px] uppercase tracking-[0.22em] text-white/45">
