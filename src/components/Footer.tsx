@@ -1,4 +1,4 @@
-type Path = '/' | '/pricing' | '/account' | '/history' | '/terms' | '/privacy' | '/aup';
+type Path = string;
 
 interface Props {
   onNavigate: (path: Path) => void;
@@ -30,6 +30,7 @@ export function Footer({ onNavigate, authenticated }: Props) {
 
         <nav className="flex flex-wrap items-center justify-center gap-x-6 gap-y-3">
           {link('Forge', '/')}
+          {link('Heartbeat', '/agents')}
           {link('Pricing', '/pricing')}
           {authenticated && link('History', '/history')}
           {authenticated && link('Account', '/account')}

@@ -12,15 +12,34 @@ import { Footer } from './components/Footer';
 import { Terms } from './components/legal/Terms';
 import { Privacy } from './components/legal/Privacy';
 import { AUP } from './components/legal/AUP';
+import { Marketplace as Heartbeat } from './components/heartbeat/Marketplace';
+import { CreateSoul } from './components/heartbeat/CreateSoul';
+import { SoulChat } from './components/heartbeat/SoulChat';
 import { useAuth } from './hooks/useAuth';
 
-type Route = '/' | '/pricing' | '/account' | '/history' | '/terms' | '/privacy' | '/aup';
+type Route =
+  | '/'
+  | '/pricing'
+  | '/account'
+  | '/history'
+  | '/terms'
+  | '/privacy'
+  | '/aup'
+  | '/agents'
+  | '/agents/new'
+  | { kind: 'soul'; idOrSlug: string };
 
-const ROUTES: Route[] = ['/', '/pricing', '/account', '/history', '/terms', '/privacy', '/aup'];
+const STATIC_ROUTES = [
+  '/', '/pricing', '/account', '/history', '/terms', '/privacy', '/aup',
+  '/agents', '/agents/new',
+] as const;
 
 function currentRoute(): Route {
-  const p = window.location.pathname as Route;
-  return ROUTES.includes(p) ? p : '/';
+  const p = window.location.pathname;
+  if ((STATIC_ROUTES as readonly string[]).includes(p)) return p as Route;
+  const m = p.match(/^\/agents\/([^/]+)$/);
+  if (m) return { kind: 'soul', idOrSlug: m[1] };
+  return '/';
 }
 
 export default function App() {
@@ -46,9 +65,10 @@ export default function App() {
     setToasts((t) => t.filter((x) => x.id !== id));
   }, []);
 
-  const navigate = useCallback((path: Route) => {
+  const navigate = useCallback((path: string) => {
     window.history.pushState(null, '', path);
-    setRoute(path);
+    // Reparse from URL so dynamic routes like /agents/:slug land correctly
+    setRoute(currentRoute());
     window.scrollTo({ top: 0 });
   }, []);
 
@@ -137,6 +157,33 @@ export default function App() {
       {route === '/terms' && <Terms onBack={() => navigate('/')} />}
       {route === '/privacy' && <Privacy onBack={() => navigate('/')} />}
       {route === '/aup' && <AUP onBack={() => navigate('/')} />}
+
+      {route === '/agents' && (
+        <Heartbeat
+          me={me}
+          onOpen={(idOrSlug) => navigate(`/agents/${idOrSlug}`)}
+          onCreate={() => {
+            if (!me?.authenticated) setSignInOpen(true);
+            else if ((me.user?.tier ?? 'free') === 'free') navigate('/pricing');
+            else navigate('/agents/new');
+          }}
+        />
+      )}
+      {route === '/agents/new' && (
+        <CreateSoul
+          me={me}
+          onCreated={(idOrSlug) => navigate(`/agents/${idOrSlug}`)}
+          onBack={() => navigate('/agents')}
+        />
+      )}
+      {typeof route === 'object' && route.kind === 'soul' && (
+        <SoulChat
+          idOrSlug={route.idOrSlug}
+          me={me}
+          onBack={() => navigate('/agents')}
+          onUpgrade={() => navigate('/pricing')}
+        />
+      )}
 
       <ToastStack toasts={toasts} onDismiss={dismissToast} />
 

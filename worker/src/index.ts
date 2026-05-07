@@ -37,6 +37,17 @@ import {
   verifyStripeSignature,
 } from './stripe';
 import { runDetection } from './detect';
+import {
+  VOICES,
+  chat as soulChat,
+  createSoul,
+  deleteSoul,
+  getSoul,
+  listMarketplace,
+  listMine,
+  remixSoul,
+  speakText,
+} from './souls';
 
 const MAX_IMAGE = 20 * 1024 * 1024;
 const MAX_VIDEO = 50 * 1024 * 1024;
@@ -63,6 +74,28 @@ export default {
         return await analyze(req, env, cors);
       if (url.pathname === '/v1/voice/verdict' && req.method === 'POST')
         return await voiceVerdict(req, env, cors);
+
+      // Heartbeat / Souls
+      if (url.pathname === '/v1/souls/voices' && req.method === 'GET')
+        return json({ voices: VOICES }, cors);
+      if (url.pathname === '/v1/souls/marketplace' && req.method === 'GET')
+        return json(await listMarketplace(env), cors);
+      if (url.pathname === '/v1/souls/mine' && req.method === 'GET')
+        return await soulsMine(req, env, cors);
+      if (url.pathname === '/v1/souls' && req.method === 'POST')
+        return await soulsCreate(req, env, cors);
+      const soulMatch = url.pathname.match(/^\/v1\/souls\/([^/]+)(?:\/([a-z]+))?$/);
+      if (soulMatch) {
+        const [, idOrSlug, action] = soulMatch;
+        if (!action && req.method === 'GET') return await soulsGet(req, env, cors, idOrSlug);
+        if (!action && req.method === 'DELETE') return await soulsDelete(req, env, cors, idOrSlug);
+        if (action === 'chat' && req.method === 'POST')
+          return await soulsChat(req, env, cors, idOrSlug);
+        if (action === 'speak' && req.method === 'POST')
+          return await soulsSpeak(req, env, cors, idOrSlug);
+        if (action === 'remix' && req.method === 'POST')
+          return await soulsRemix(req, env, cors, idOrSlug);
+      }
 
       // Billing
       if (url.pathname === '/v1/checkout' && req.method === 'POST')
@@ -563,6 +596,85 @@ async function markSubscriptionCanceled(env: Env, sub: StripeSubscription): Prom
   )
     .bind(sub.customer)
     .run();
+}
+
+// -- souls handlers -----------------------------------------------------------
+
+async function soulsMine(req: Request, env: Env, cors: HeadersInit): Promise<Response> {
+  const token = readSessionCookie(req);
+  const user = token ? await lookupSession(env, token) : null;
+  if (!user) return json({ error: 'auth_required' }, cors, 401);
+  return json(await listMine(env, user), cors);
+}
+
+async function soulsCreate(req: Request, env: Env, cors: HeadersInit): Promise<Response> {
+  const token = readSessionCookie(req);
+  const user = token ? await lookupSession(env, token) : null;
+  if (!user) return json({ error: 'auth_required' }, cors, 401);
+  const tier = await tierForUser(env, user.id);
+  const body = (await req.json().catch(() => ({}))) as Parameters<typeof createSoul>[3];
+  const r = await createSoul(env, user, tier, body);
+  if (!r.ok) return json({ error: r.error, upgrade_url: `${env.SITE_URL}/pricing` }, cors, r.status);
+  return json({ soul: r.soul }, cors);
+}
+
+async function soulsGet(req: Request, env: Env, cors: HeadersInit, idOrSlug: string): Promise<Response> {
+  const token = readSessionCookie(req);
+  const user = token ? await lookupSession(env, token) : null;
+  const r = await getSoul(env, idOrSlug, user);
+  if (!r) return json({ error: 'not_found' }, cors, 404);
+  return json(r, cors);
+}
+
+async function soulsDelete(req: Request, env: Env, cors: HeadersInit, idOrSlug: string): Promise<Response> {
+  const token = readSessionCookie(req);
+  const user = token ? await lookupSession(env, token) : null;
+  if (!user) return json({ error: 'auth_required' }, cors, 401);
+  const ok = await deleteSoul(env, user, idOrSlug);
+  return json({ ok }, cors, ok ? 200 : 404);
+}
+
+async function soulsRemix(req: Request, env: Env, cors: HeadersInit, idOrSlug: string): Promise<Response> {
+  const token = readSessionCookie(req);
+  const user = token ? await lookupSession(env, token) : null;
+  if (!user) return json({ error: 'auth_required' }, cors, 401);
+  const tier = await tierForUser(env, user.id);
+  const r = await remixSoul(env, user, tier, idOrSlug);
+  if (!r.ok) return json({ error: r.error, upgrade_url: `${env.SITE_URL}/pricing` }, cors, r.status);
+  return json({ soul: r.soul }, cors);
+}
+
+async function soulsChat(req: Request, env: Env, cors: HeadersInit, idOrSlug: string): Promise<Response> {
+  const token = readSessionCookie(req);
+  const user = token ? await lookupSession(env, token) : null;
+  const tier: import('./types').Tier = user ? await tierForUser(env, user.id) : 'free';
+  const identity = user ? `user:${user.id}` : await anonIdentity(req);
+  const body = (await req.json().catch(() => ({}))) as { message?: string; session_id?: string };
+  if (!body.message) return json({ error: 'missing_message' }, cors, 400);
+  const sessionId = body.session_id || `s_${randomToken(8)}`;
+  const r = await soulChat(env, user, identity, tier, idOrSlug, body.message, sessionId);
+  if (!r.ok) return json({ error: r.error, ...(r.meta ?? {}) }, cors, r.status);
+  return json({ reply: r.reply, message_id: r.messageId, session_id: sessionId }, cors);
+}
+
+async function soulsSpeak(
+  req: Request,
+  env: Env,
+  cors: HeadersInit,
+  idOrSlug: string,
+): Promise<Response> {
+  const body = (await req.json().catch(() => ({}))) as { text?: string };
+  if (!body.text) return json({ error: 'missing_text' }, cors, 400);
+  const soul = await env.DB.prepare('SELECT voice_id, public, user_id FROM souls WHERE id = ? OR slug = ?')
+    .bind(idOrSlug, idOrSlug)
+    .first<{ voice_id: string; public: number; user_id: string }>();
+  if (!soul) return json({ error: 'not_found' }, cors, 404);
+  if (soul.public === 0) {
+    const token = readSessionCookie(req);
+    const user = token ? await lookupSession(env, token) : null;
+    if (soul.user_id !== user?.id) return json({ error: 'private_soul' }, cors, 403);
+  }
+  return await speakText(env, soul.voice_id, body.text, cors);
 }
 
 // -- helpers ------------------------------------------------------------------

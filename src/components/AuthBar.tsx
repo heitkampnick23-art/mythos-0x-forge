@@ -5,7 +5,7 @@ import { GlassPanel } from './glass';
 interface Props {
   me: MeResponse | null;
   onRefresh: () => void;
-  onNavigate: (path: '/' | '/pricing' | '/account') => void;
+  onNavigate: (path: string) => void;
   forceSignInOpen?: boolean;
   onSignInClose?: () => void;
 }
@@ -25,6 +25,13 @@ export function AuthBar({ me, onRefresh, onNavigate, forceSignInOpen, onSignInCl
 
   return (
     <div className="pointer-events-none fixed right-4 top-4 z-40 flex items-center gap-2 sm:right-6 sm:top-6">
+      <button
+        type="button"
+        onClick={() => onNavigate('/agents')}
+        className="pointer-events-auto rounded-full border border-ember-gold/40 bg-ember-gold/[0.06] px-4 py-2 text-[10px] font-semibold uppercase tracking-[0.28em] text-ember-gold transition hover:bg-ember-gold/[0.12] hover:shadow-ember-glow"
+      >
+        Heartbeat
+      </button>
       <button
         type="button"
         onClick={() => onNavigate('/pricing')}
