@@ -56,6 +56,7 @@ import { deleteDoc, listDocs, uploadDoc } from './kb';
 import { isOverageEnabled, recordOverage, setupOverageInfra } from './overage';
 import { attachPhone, detachPhone, handleIncoming, handleRespond, handleTts } from './phone';
 import { batchCsv, createBatch, getBatchStatus, listBatches, processBatch } from './batch';
+import { getSignedUrl as getConvaiSignedUrl } from './convai';
 
 const MAX_IMAGE = 20 * 1024 * 1024;
 const MAX_VIDEO = 50 * 1024 * 1024;
@@ -206,7 +207,7 @@ export default {
         if (docId && req.method === 'DELETE')
           return await kbDelete(req, env, cors, idOrSlug, docId);
       }
-      const soulMatch = url.pathname.match(/^\/v1\/souls\/([^/]+)(?:\/([a-z]+))?$/);
+      const soulMatch = url.pathname.match(/^\/v1\/souls\/([^/]+)(?:\/([a-z-]+))?$/);
       if (soulMatch) {
         const [, idOrSlug, action] = soulMatch;
         if (!action && req.method === 'GET') return await soulsGet(req, env, cors, idOrSlug);
@@ -217,6 +218,8 @@ export default {
           return await soulsSpeak(req, env, cors, idOrSlug);
         if (action === 'remix' && req.method === 'POST')
           return await soulsRemix(req, env, cors, idOrSlug);
+        if (action === 'convai-url' && req.method === 'POST')
+          return await soulsConvaiUrl(req, env, cors, idOrSlug);
       }
 
       // Billing
@@ -1108,6 +1111,34 @@ async function soulsChat(req: Request, env: Env, cors: HeadersInit, idOrSlug: st
   const r = await soulChat(env, user, identity, tier, idOrSlug, body.message, sessionId);
   if (!r.ok) return json({ error: r.error, ...(r.meta ?? {}) }, cors, r.status);
   return json({ reply: r.reply, message_id: r.messageId, session_id: sessionId }, cors);
+}
+
+async function soulsConvaiUrl(
+  req: Request,
+  env: Env,
+  cors: HeadersInit,
+  idOrSlug: string,
+): Promise<Response> {
+  const soul = await env.DB.prepare(
+    'SELECT convai_agent_id, public, user_id FROM souls WHERE id = ? OR slug = ?',
+  )
+    .bind(idOrSlug, idOrSlug)
+    .first<{ convai_agent_id: string | null; public: number; user_id: string }>();
+  if (!soul) return json({ error: 'not_found' }, cors, 404);
+  if (!soul.convai_agent_id) return json({ error: 'realtime_not_enabled' }, cors, 404);
+  // Public souls' Convai URL is reachable by anyone (anonymous chat in browser)
+  if (soul.public === 0) {
+    const token = readSessionCookie(req);
+    const user = token ? await lookupSession(env, token) : null;
+    if (soul.user_id !== user?.id) return json({ error: 'private_soul' }, cors, 403);
+  }
+  try {
+    const signedUrl = await getConvaiSignedUrl(env, soul.convai_agent_id);
+    return json({ signed_url: signedUrl, agent_id: soul.convai_agent_id }, cors);
+  } catch (e) {
+    console.error('convai_url_failed', (e as Error).message);
+    return json({ error: 'convai_failed' }, cors, 502);
+  }
 }
 
 async function soulsSpeak(

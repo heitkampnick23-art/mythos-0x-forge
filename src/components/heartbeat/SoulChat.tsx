@@ -13,6 +13,7 @@ import { GlassPanel } from '../glass';
 import { useVoiceCommands } from '../../hooks/useVoiceCommands';
 import { KbPanel } from './KbPanel';
 import { PhonePanel } from './PhonePanel';
+import { RealtimeVoice } from './RealtimeVoice';
 
 interface Props {
   idOrSlug: string;
@@ -241,14 +242,24 @@ export function SoulChat({ idOrSlug, me, onBack, onUpgrade }: Props) {
         </div>
       </div>
 
+      {/* Real-time voice — visible to anyone (anon chat is allowed on public Souls). */}
+      <RealtimeVoice
+        soulIdOrSlug={idOrSlug}
+        hasRealtime={!!(soul as { realtime_voice?: boolean; convai_agent_id?: string | null })
+          .realtime_voice ||
+          !!(soul as { convai_agent_id?: string | null }).convai_agent_id}
+      />
+
       {owned && (
         <>
           <KbPanel soulIdOrSlug={idOrSlug} onUpgrade={onUpgrade} />
           <PhonePanel
             soulIdOrSlug={idOrSlug}
             currentNumber={(soul as { phone_number?: string | null }).phone_number ?? null}
+            convaiAgentId={
+              (soul as { convai_agent_id?: string | null }).convai_agent_id ?? null
+            }
             onChanged={() => {
-              // Re-fetch soul to refresh phone display
               window.location.reload();
             }}
           />

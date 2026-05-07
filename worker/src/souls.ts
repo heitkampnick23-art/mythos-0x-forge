@@ -12,6 +12,7 @@ import type { Env, Tier, User } from './types';
 import { randomToken } from './auth';
 import { chargeCost, estimateTokens, getBudget } from './budget';
 import { retrieveContext } from './kb';
+import { createAgent as createConvaiAgent, deleteAgent as deleteConvaiAgent } from './convai';
 
 export const VOICES = [
   { id: 'pNInz6obpgDQGcFmaJgB', label: 'Adam', desc: 'deep, authoritative' },
@@ -50,6 +51,8 @@ interface SoulRow {
   updated_at: number;
   phone_number: string | null;
   phone_provider: string | null;
+  convai_agent_id: string | null;
+  convai_synced_at: number | null;
 }
 
 export function publicShape(s: SoulRow) {
@@ -77,6 +80,8 @@ export function ownerShape(s: SoulRow) {
     remixed_from: s.remixed_from,
     phone_number: s.phone_number,
     phone_provider: s.phone_provider,
+    convai_agent_id: s.convai_agent_id,
+    realtime_voice: !!s.convai_agent_id,
   };
 }
 
@@ -124,6 +129,7 @@ export async function createSoul(
     first_message?: string;
     voice_id?: string;
     public?: boolean;
+    realtime_voice?: boolean;
   },
 ): Promise<{ ok: true; soul: ReturnType<typeof ownerShape> } | { ok: false; error: string; status: number }> {
   if (!body.name || !body.system_prompt || !body.voice_id) {
@@ -148,9 +154,25 @@ export async function createSoul(
   const voice = VOICES.find((v) => v.id === body.voice_id)!;
   const now = Math.floor(Date.now() / 1000);
 
+  // Optionally mirror as a Convai agent for real-time voice. Best-effort: if
+  // EL fails we still create the Soul, just without the convai_agent_id.
+  let convaiAgentId: string | null = null;
+  if (body.realtime_voice && env.ELEVENLABS_API_KEY) {
+    try {
+      convaiAgentId = await createConvaiAgent(env, {
+        name: body.name,
+        systemPrompt: body.system_prompt,
+        firstMessage: body.first_message ?? 'Hello.',
+        voiceId: voice.id,
+      });
+    } catch (e) {
+      console.error('convai_create_failed', (e as Error).message);
+    }
+  }
+
   await env.DB.prepare(
-    `INSERT INTO souls (id, user_id, name, tagline, system_prompt, first_message, voice_id, voice_label, public, slug, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO souls (id, user_id, name, tagline, system_prompt, first_message, voice_id, voice_label, public, slug, created_at, updated_at, convai_agent_id, convai_synced_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   )
     .bind(
       id,
@@ -165,6 +187,8 @@ export async function createSoul(
       slug,
       now,
       now,
+      convaiAgentId,
+      convaiAgentId ? now : null,
     )
     .run();
 
@@ -175,9 +199,19 @@ export async function createSoul(
 }
 
 export async function deleteSoul(env: Env, user: User, id: string): Promise<boolean> {
+  // Pull the convai_agent_id first so we can clean it up if present
+  const soul = await env.DB.prepare(
+    'SELECT convai_agent_id FROM souls WHERE id = ? AND user_id = ?',
+  )
+    .bind(id, user.id)
+    .first<{ convai_agent_id: string | null }>();
   const r = await env.DB.prepare('DELETE FROM souls WHERE id = ? AND user_id = ?')
     .bind(id, user.id)
     .run();
+  if (soul?.convai_agent_id) {
+    // Best-effort cleanup; don't block on failures
+    deleteConvaiAgent(env, soul.convai_agent_id).catch(() => undefined);
+  }
   return (r.meta.changes ?? 0) > 0;
 }
 

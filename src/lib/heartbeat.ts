@@ -28,6 +28,8 @@ export interface SoulOwner extends SoulPublic {
   is_owner: true;
   remixed_from: string | null;
   phone_number?: string | null;
+  convai_agent_id?: string | null;
+  realtime_voice?: boolean;
 }
 
 async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
@@ -60,10 +62,17 @@ export const createSoul = (body: {
   first_message?: string;
   voice_id: string;
   public: boolean;
+  realtime_voice?: boolean;
 }) =>
   api<{ soul: SoulOwner }>('/v1/souls', { method: 'POST', body: JSON.stringify(body) }).then(
     (r) => r.soul,
   );
+
+/** Get a signed WebSocket URL for the realtime Convai widget. */
+export const getConvaiSignedUrl = (idOrSlug: string) =>
+  api<{ signed_url: string; agent_id: string }>(`/v1/souls/${idOrSlug}/convai-url`, {
+    method: 'POST',
+  });
 
 export const deleteSoul = (id: string) =>
   api<{ ok: boolean }>(`/v1/souls/${id}`, { method: 'DELETE' });

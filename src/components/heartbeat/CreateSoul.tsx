@@ -41,6 +41,7 @@ export function CreateSoul({ me, onCreated, onBack }: Props) {
   const [firstMessage, setFirstMessage] = useState('Hello.');
   const [voiceId, setVoiceId] = useState('pNInz6obpgDQGcFmaJgB');
   const [isPublic, setIsPublic] = useState(true);
+  const [realtime, setRealtime] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
@@ -76,6 +77,7 @@ export function CreateSoul({ me, onCreated, onBack }: Props) {
         first_message: firstMessage,
         voice_id: voiceId,
         public: isPublic,
+        realtime_voice: realtime,
       });
       onCreated(soul.slug ?? soul.id);
     } catch (e) {
@@ -193,6 +195,16 @@ export function CreateSoul({ me, onCreated, onBack }: Props) {
             <div className="flex gap-2">
               <Toggle on={isPublic} onClick={() => setIsPublic(true)} label="Public" />
               <Toggle on={!isPublic} onClick={() => setIsPublic(false)} label="Private" />
+            </div>
+          </Field>
+
+          <Field
+            label="Real-time voice"
+            hint="Mirrors this Soul as an ElevenLabs Convai agent. Enables ~300ms-latency live voice chat in the browser, plus phone-number support via EL's Twilio integration. Disable for text-only Souls."
+          >
+            <div className="flex gap-2">
+              <Toggle on={realtime} onClick={() => setRealtime(true)} label="Enabled" />
+              <Toggle on={!realtime} onClick={() => setRealtime(false)} label="Disabled" />
             </div>
           </Field>
 
