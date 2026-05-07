@@ -10,6 +10,7 @@
 
 import type { Env, Tier, User } from './types';
 import { randomToken } from './auth';
+import { chargeCost, estimateTokens, getBudget } from './budget';
 
 export const VOICES = [
   { id: 'pNInz6obpgDQGcFmaJgB', label: 'Adam', desc: 'deep, authoritative' },
@@ -238,7 +239,7 @@ export async function chat(
   if (!env.ANTHROPIC_API_KEY) return { ok: false, error: 'llm_not_configured', status: 503 };
   if (!userMessage.trim()) return { ok: false, error: 'empty_message', status: 400 };
 
-  // Daily limit
+  // Daily limit (count) + budget check (cost)
   const day = new Date().toISOString().slice(0, 10);
   const used = await env.DB.prepare(
     'SELECT message_count FROM soul_usage_daily WHERE identity = ? AND day = ?',
@@ -252,6 +253,19 @@ export async function chat(
       error: 'rate_limited',
       status: 402,
       meta: { used: used?.message_count, limit, tier, upgrade_url: `${env.SITE_URL}/pricing` },
+    };
+  }
+  const budget = await getBudget(env, identity, tier);
+  if (budget.exceeded) {
+    return {
+      ok: false,
+      error: 'budget_exceeded',
+      status: 402,
+      meta: {
+        used_microcents: budget.used_microcents,
+        cap_microcents: budget.cap_microcents,
+        upgrade_url: `${env.SITE_URL}/pricing`,
+      },
     };
   }
 
@@ -293,9 +307,16 @@ export async function chat(
     console.error('anthropic_chat_failed', anthRes.status, detail.slice(0, 200));
     return { ok: false, error: 'llm_failed', status: 502 };
   }
-  const data = (await anthRes.json()) as { content: Array<{ text?: string }> };
+  const data = (await anthRes.json()) as {
+    content: Array<{ text?: string }>;
+    usage?: { input_tokens?: number; output_tokens?: number };
+  };
   const reply = (data.content?.[0]?.text ?? '').trim();
   if (!reply) return { ok: false, error: 'empty_reply', status: 502 };
+  await chargeCost(env, identity, {
+    anthropic_in_tokens: data.usage?.input_tokens ?? estimateTokens(soul.system_prompt + userMessage),
+    anthropic_out_tokens: data.usage?.output_tokens ?? estimateTokens(reply),
+  });
 
   // Persist + increment counters
   const userMsgId = randomToken(10);
@@ -327,6 +348,8 @@ export async function speakText(
   voiceId: string,
   text: string,
   cors: HeadersInit,
+  identity: string,
+  tier: Tier,
 ): Promise<Response> {
   if (!env.ELEVENLABS_API_KEY) {
     return new Response(JSON.stringify({ error: 'tts_not_configured' }), {
@@ -339,6 +362,18 @@ export async function speakText(
       status: 400,
       headers: { 'content-type': 'application/json', ...cors },
     });
+  }
+  const budget = await getBudget(env, identity, tier);
+  if (budget.exceeded) {
+    return new Response(
+      JSON.stringify({
+        error: 'budget_exceeded',
+        used_microcents: budget.used_microcents,
+        cap_microcents: budget.cap_microcents,
+        upgrade_url: `${env.SITE_URL}/pricing`,
+      }),
+      { status: 402, headers: { 'content-type': 'application/json', ...cors } },
+    );
   }
   const ttsRes = await fetch(
     `https://api.elevenlabs.io/v1/text-to-speech/${voiceId}/stream?output_format=mp3_44100_128`,
@@ -364,6 +399,8 @@ export async function speakText(
       headers: { 'content-type': 'application/json', ...cors },
     });
   }
+  // Charge for the characters we sent (cap-aware: text was already truncated).
+  await chargeCost(env, identity, { elevenlabs_chars: Math.min(text.length, 5000) });
   const headers = new Headers(cors as HeadersInit);
   headers.set('content-type', 'audio/mpeg');
   headers.set('cache-control', 'private, max-age=3600');

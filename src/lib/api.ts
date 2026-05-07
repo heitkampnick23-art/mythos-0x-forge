@@ -12,9 +12,46 @@ export interface Limits {
 
 export interface MeResponse {
   authenticated: boolean;
-  user?: { id: string; email: string; tier: Tier; hasStripe: boolean };
+  user?: {
+    id: string;
+    email: string;
+    tier: Tier;
+    hasStripe: boolean;
+    display_name: string | null;
+    default_voice_id: string;
+    auto_speak: boolean;
+    notify_email: boolean;
+  };
   tier?: Tier;
   limits: Limits;
+}
+
+export interface UsageResponse {
+  tier: Tier;
+  day: string;
+  budget: {
+    used_cents: number;
+    cap_cents: number;
+    ratio: number;
+    near_limit: boolean;
+    exceeded: boolean;
+  };
+  analyses: { used: number; limit: number };
+  soul_messages: { used: number; limit: number };
+}
+
+export const fetchUsage = (): Promise<UsageResponse> => api<UsageResponse>('/v1/me/usage');
+
+export async function updateProfile(body: {
+  display_name?: string;
+  default_voice_id?: string;
+  auto_speak?: boolean;
+  notify_email?: boolean;
+}): Promise<void> {
+  await api<{ ok: true }>('/v1/me/profile', {
+    method: 'POST',
+    body: JSON.stringify(body),
+  });
 }
 
 async function api<T>(path: string, init: RequestInit = {}): Promise<T> {

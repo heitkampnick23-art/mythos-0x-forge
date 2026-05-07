@@ -48,6 +48,7 @@ import {
   remixSoul,
   speakText,
 } from './souls';
+import { chargeCost, getBudget } from './budget';
 
 const MAX_IMAGE = 20 * 1024 * 1024;
 const MAX_VIDEO = 50 * 1024 * 1024;
@@ -68,6 +69,10 @@ export default {
       // Auth & app routes
       if (url.pathname === '/v1/health') return json({ ok: true, ts: Date.now() }, cors);
       if (url.pathname === '/v1/me') return await whoami(req, env, cors);
+      if (url.pathname === '/v1/me/usage' && req.method === 'GET')
+        return await meUsage(req, env, cors);
+      if (url.pathname === '/v1/me/profile' && req.method === 'POST')
+        return await meProfile(req, env, cors);
       if (url.pathname === '/v1/analyses' && req.method === 'GET')
         return await listAnalyses(req, env, cors);
       if (url.pathname === '/v1/analyze' && req.method === 'POST')
@@ -132,14 +137,115 @@ async function whoami(req: Request, env: Env, cors: HeadersInit): Promise<Respon
     return json({ authenticated: false, tier: 'free' as Tier, limits: DAILY_LIMITS }, cors);
   }
   const tier = await tierForUser(env, user.id);
+  // Fetch profile columns separately because lookupSession returns the base User shape.
+  const profile = await env.DB.prepare(
+    'SELECT display_name, default_voice_id, auto_speak, notify_email FROM users WHERE id = ?',
+  )
+    .bind(user.id)
+    .first<{
+      display_name: string | null;
+      default_voice_id: string;
+      auto_speak: number;
+      notify_email: number;
+    }>();
   return json(
     {
       authenticated: true,
-      user: { id: user.id, email: user.email, tier, hasStripe: !!user.stripe_customer_id },
+      user: {
+        id: user.id,
+        email: user.email,
+        tier,
+        hasStripe: !!user.stripe_customer_id,
+        display_name: profile?.display_name ?? null,
+        default_voice_id: profile?.default_voice_id ?? 'pNInz6obpgDQGcFmaJgB',
+        auto_speak: profile?.auto_speak !== 0,
+        notify_email: profile?.notify_email !== 0,
+      },
       limits: DAILY_LIMITS,
     },
     cors,
   );
+}
+
+async function meUsage(req: Request, env: Env, cors: HeadersInit): Promise<Response> {
+  const token = readSessionCookie(req);
+  const user = token ? await lookupSession(env, token) : null;
+  if (!user) return json({ error: 'auth_required' }, cors, 401);
+  const tier = await tierForUser(env, user.id);
+  const identity = userIdentity(user.id);
+  const day = utcDay();
+
+  const [budget, analyses, soulMessages] = await Promise.all([
+    getBudget(env, identity, tier),
+    env.DB.prepare('SELECT count FROM usage_daily WHERE identity = ? AND day = ?')
+      .bind(identity, day)
+      .first<{ count: number }>(),
+    env.DB.prepare('SELECT message_count FROM soul_usage_daily WHERE identity = ? AND day = ?')
+      .bind(identity, day)
+      .first<{ message_count: number }>(),
+  ]);
+
+  return json(
+    {
+      tier,
+      day,
+      budget: {
+        used_cents: budget.used_microcents / 100,
+        cap_cents: budget.cap_microcents / 100,
+        ratio: Number(budget.ratio.toFixed(3)),
+        near_limit: budget.near_limit,
+        exceeded: budget.exceeded,
+      },
+      analyses: {
+        used: analyses?.count ?? 0,
+        limit: DAILY_LIMITS[tier],
+      },
+      soul_messages: {
+        used: soulMessages?.message_count ?? 0,
+        // Soul daily-message limits live in souls.ts; mirror them here for the dashboard.
+        limit: tier === 'free' ? 50 : tier === 'pro' ? 200 : 1000,
+      },
+    },
+    cors,
+  );
+}
+
+async function meProfile(req: Request, env: Env, cors: HeadersInit): Promise<Response> {
+  const token = readSessionCookie(req);
+  const user = token ? await lookupSession(env, token) : null;
+  if (!user) return json({ error: 'auth_required' }, cors, 401);
+  const body = (await req.json().catch(() => ({}))) as {
+    display_name?: string;
+    default_voice_id?: string;
+    auto_speak?: boolean;
+    notify_email?: boolean;
+  };
+
+  const updates: string[] = [];
+  const values: unknown[] = [];
+  if (typeof body.display_name === 'string') {
+    updates.push('display_name = ?');
+    values.push(body.display_name.trim().slice(0, 60) || null);
+  }
+  if (typeof body.default_voice_id === 'string') {
+    updates.push('default_voice_id = ?');
+    values.push(body.default_voice_id);
+  }
+  if (typeof body.auto_speak === 'boolean') {
+    updates.push('auto_speak = ?');
+    values.push(body.auto_speak ? 1 : 0);
+  }
+  if (typeof body.notify_email === 'boolean') {
+    updates.push('notify_email = ?');
+    values.push(body.notify_email ? 1 : 0);
+  }
+  if (updates.length === 0) return json({ ok: true, no_changes: true }, cors);
+
+  values.push(user.id);
+  await env.DB.prepare(`UPDATE users SET ${updates.join(', ')} WHERE id = ?`)
+    .bind(...values)
+    .run();
+  return json({ ok: true }, cors);
 }
 
 // -- analyze (gated) ----------------------------------------------------------
@@ -162,16 +268,24 @@ async function analyze(req: Request, env: Env, cors: HeadersInit): Promise<Respo
   const identity = user ? userIdentity(user.id) : await anonIdentity(req);
   const day = utcDay();
 
-  // Daily limit check
+  // Daily limit check (count) + budget check (cost)
   const limit = DAILY_LIMITS[tier];
   const used = await currentUsage(env, identity, day);
   if (used >= limit) {
     return json(
+      { error: 'rate_limited', tier, used, limit, upgrade_url: `${env.SITE_URL}/pricing` },
+      cors,
+      402,
+    );
+  }
+  const budget = await getBudget(env, identity, tier);
+  if (budget.exceeded) {
+    return json(
       {
-        error: 'rate_limited',
+        error: 'budget_exceeded',
         tier,
-        used,
-        limit,
+        used_microcents: budget.used_microcents,
+        cap_microcents: budget.cap_microcents,
         upgrade_url: `${env.SITE_URL}/pricing`,
       },
       cors,
@@ -186,8 +300,8 @@ async function analyze(req: Request, env: Env, cors: HeadersInit): Promise<Respo
     customMetadata: { kind: v.kind, originalName: file.name },
   });
 
-  // Detect + narrate
-  const result: AnalysisResult = await runDetection(file, v.kind, env);
+  // Detect + narrate (cost-instrumented)
+  const result: AnalysisResult = await runDetection(file, v.kind, env, identity);
   result.durationMs = Date.now() - start;
 
   // Persist + increment counter
@@ -240,6 +354,20 @@ async function voiceVerdict(req: Request, env: Env, cors: HeadersInit): Promise<
   if (tier === 'free') {
     return json({ error: 'voice_requires_pro', upgrade_url: `${env.SITE_URL}/pricing` }, cors, 402);
   }
+  const identity = userIdentity(user.id);
+  const budget = await getBudget(env, identity, tier);
+  if (budget.exceeded) {
+    return json(
+      {
+        error: 'budget_exceeded',
+        used_microcents: budget.used_microcents,
+        cap_microcents: budget.cap_microcents,
+        upgrade_url: `${env.SITE_URL}/pricing`,
+      },
+      cors,
+      402,
+    );
+  }
 
   const body = (await req.json().catch(() => ({}))) as {
     confidence?: number;
@@ -276,6 +404,9 @@ async function voiceVerdict(req: Request, env: Env, cors: HeadersInit): Promise<
     console.error('elevenlabs_failed', ttsRes.status, detail.slice(0, 200));
     return json({ error: 'tts_failed', status: ttsRes.status }, cors, 502);
   }
+
+  // Charge ElevenLabs cost
+  await chargeCost(env, identity, { elevenlabs_chars: Math.min(script.length, 5000) });
 
   // Stream the MP3 back to the client
   const headers = new Headers(cors as HeadersInit);
@@ -669,12 +800,14 @@ async function soulsSpeak(
     .bind(idOrSlug, idOrSlug)
     .first<{ voice_id: string; public: number; user_id: string }>();
   if (!soul) return json({ error: 'not_found' }, cors, 404);
-  if (soul.public === 0) {
-    const token = readSessionCookie(req);
-    const user = token ? await lookupSession(env, token) : null;
-    if (soul.user_id !== user?.id) return json({ error: 'private_soul' }, cors, 403);
+  const token = readSessionCookie(req);
+  const user = token ? await lookupSession(env, token) : null;
+  if (soul.public === 0 && soul.user_id !== user?.id) {
+    return json({ error: 'private_soul' }, cors, 403);
   }
-  return await speakText(env, soul.voice_id, body.text, cors);
+  const tier = user ? await tierForUser(env, user.id) : 'free';
+  const identity = user ? userIdentity(user.id) : await anonIdentity(req);
+  return await speakText(env, soul.voice_id, body.text, cors, identity, tier);
 }
 
 // -- helpers ------------------------------------------------------------------

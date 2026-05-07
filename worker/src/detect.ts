@@ -3,16 +3,19 @@
 // green during outages or before secrets are set.
 
 import type { AnalysisResult, Env, Finding, MediaKind } from './types';
+import { chargeCost, estimateTokens } from './budget';
 
 export async function runDetection(
   file: File,
   kind: MediaKind,
   env: Env,
+  identity: string,
 ): Promise<AnalysisResult> {
   let result: AnalysisResult;
   if (env.SIGHTENGINE_USER && env.SIGHTENGINE_SECRET) {
     try {
       result = await detectWithSightengine(file, kind, env);
+      await chargeCost(env, identity, { sightengine_ops: kind === 'video' ? 5 : 1 });
     } catch (e) {
       console.error('sightengine_failed', (e as Error).message);
       if (env.ENABLE_MOCK_FALLBACK === 'true') result = await mockAnalyze(file, kind);
@@ -26,7 +29,7 @@ export async function runDetection(
 
   if (env.ANTHROPIC_API_KEY) {
     try {
-      result.findings = await narrate(result, env);
+      result.findings = await narrate(result, env, identity);
     } catch (e) {
       console.error('narrate_failed', (e as Error).message);
     }
@@ -123,7 +126,7 @@ function mapSightengine(data: SightengineResult, kind: MediaKind): AnalysisResul
 
 // -- Anthropic narration ------------------------------------------------------
 
-async function narrate(result: AnalysisResult, env: Env): Promise<Finding[]> {
+async function narrate(result: AnalysisResult, env: Env, identity: string): Promise<Finding[]> {
   const aiPct = (result.confidence * 100).toFixed(1);
   const prompt = `You are a forensic AI media analyst writing a court-grade analysis report. The detection model returned a single overall confidence score; your job is to expand that into a plausible, technical, multi-category forensic breakdown that a media authentication expert would write.
 
@@ -165,7 +168,14 @@ Format:
     }),
   });
   if (!r.ok) throw new Error(`anthropic ${r.status}`);
-  const data = (await r.json()) as { content: Array<{ text?: string }> };
+  const data = (await r.json()) as {
+    content: Array<{ text?: string }>;
+    usage?: { input_tokens?: number; output_tokens?: number };
+  };
+  await chargeCost(env, identity, {
+    anthropic_in_tokens: data.usage?.input_tokens ?? estimateTokens(prompt),
+    anthropic_out_tokens: data.usage?.output_tokens ?? 400,
+  });
   const text = data.content?.[0]?.text ?? '[]';
   const start = text.indexOf('[');
   const end = text.lastIndexOf(']');
