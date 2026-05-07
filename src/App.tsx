@@ -103,6 +103,19 @@ export default function App() {
     }
   }, []);
 
+  // Branded subdomain landing: agents.sumhead.com/ → /agents (Heartbeat
+  // marketplace). The same SPA serves both hosts via Pages custom domain.
+  useEffect(() => {
+    if (
+      typeof window !== 'undefined' &&
+      window.location.hostname === 'agents.sumhead.com' &&
+      window.location.pathname === '/'
+    ) {
+      window.history.replaceState(null, '', '/agents');
+      setRoute(currentRoute());
+    }
+  }, []);
+
   // First-run onboarding: shown once per browser, or any time via ?welcome=1.
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);

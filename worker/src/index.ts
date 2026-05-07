@@ -1306,8 +1306,21 @@ function safeName(name: string): string {
   return name.replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 80);
 }
 
+// User-authorized credentialed origins (2026-05-07): heitkampnick23 explicitly
+// approved adding *.sumhead.com to the credentialed CORS allowlist so the
+// agents.sumhead.com Pages custom domain can sign in to the Forge API.
+const SIBLING_CREDENTIALED_ORIGINS = new Set([
+  'https://agents.sumhead.com',
+  'https://sumhead.com',
+  'https://www.sumhead.com',
+  'https://speakapp.sumhead.com',
+  'http://localhost:5173',
+]);
+
 function corsHeaders(env: Env, origin: string | null, req?: Request): HeadersInit {
-  const allowed = origin === env.ALLOWED_ORIGIN || origin === 'http://localhost:5173';
+  const allowed =
+    origin === env.ALLOWED_ORIGIN ||
+    (origin !== null && SIBLING_CREDENTIALED_ORIGINS.has(origin));
   // Embed widget endpoints accept any origin (souls chat/speak from arbitrary
   // sites where the widget is dropped in). Credentialed cookie auth still
   // requires same-site, but anonymous chat works cross-origin.
