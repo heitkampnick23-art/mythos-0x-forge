@@ -17,6 +17,8 @@ import { CreateSoul } from './components/heartbeat/CreateSoul';
 import { SoulChat } from './components/heartbeat/SoulChat';
 import { VerdictPage } from './components/VerdictPage';
 import { Batch } from './components/Batch';
+import { ForAttorneys } from './components/ForAttorneys';
+import { RecentVerdicts } from './components/RecentVerdicts';
 import { useAuth } from './hooks/useAuth';
 
 type Route =
@@ -30,12 +32,13 @@ type Route =
   | '/agents'
   | '/agents/new'
   | '/batch'
+  | '/for-attorneys'
   | { kind: 'soul'; idOrSlug: string }
   | { kind: 'verdict'; slug: string };
 
 const STATIC_ROUTES = [
   '/', '/pricing', '/account', '/history', '/terms', '/privacy', '/aup',
-  '/agents', '/agents/new', '/batch',
+  '/agents', '/agents/new', '/batch', '/for-attorneys',
 ] as const;
 
 function currentRoute(): Route {
@@ -133,6 +136,7 @@ export default function App() {
       {route === '/' && (
         <>
           <Hero visibility={heroVis} />
+          {state.kind === 'idle' && <RecentVerdicts onNavigate={navigate} />}
           <ForgeEye
             ref={forgeRef}
             state={state}
@@ -161,6 +165,7 @@ export default function App() {
       )}
       {route === '/history' && <History me={me} onNavigate={navigate} />}
       {route === '/batch' && <Batch me={me} onNavigate={navigate} />}
+      {route === '/for-attorneys' && <ForAttorneys onNavigate={navigate} />}
       {route === '/terms' && <Terms onBack={() => navigate('/')} />}
       {route === '/privacy' && <Privacy onBack={() => navigate('/')} />}
       {route === '/aup' && <AUP onBack={() => navigate('/')} />}

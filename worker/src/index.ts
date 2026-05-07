@@ -174,6 +174,27 @@ export default {
       if (url.pathname === '/v1/voice/verdict' && req.method === 'POST')
         return await voiceVerdict(req, env, cors);
 
+      // Recent public verdicts (for homepage social-proof strip)
+      if (url.pathname === '/v1/verdicts/recent' && req.method === 'GET') {
+        const rows = await env.DB.prepare(
+          `SELECT share_slug, kind, confidence, verdict, original_name, created_at
+           FROM analyses WHERE public = 1 AND share_slug IS NOT NULL
+           ORDER BY created_at DESC LIMIT 12`,
+        ).all<{
+          share_slug: string;
+          kind: string;
+          confidence: number;
+          verdict: string;
+          original_name: string | null;
+          created_at: number;
+        }>();
+        const headers = new Headers(cors as HeadersInit);
+        headers.set('cache-control', 'public, max-age=120');
+        return new Response(JSON.stringify({ verdicts: rows.results ?? [] }), {
+          status: 200,
+          headers: { 'content-type': 'application/json', ...Object.fromEntries(headers) },
+        });
+      }
       // Public verdict pages + PDF reports
       const verdictMatch = url.pathname.match(/^\/v1\/verdicts\/([^/]+)(?:\/([a-z]+))?$/);
       if (verdictMatch) {

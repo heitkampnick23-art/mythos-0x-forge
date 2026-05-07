@@ -135,6 +135,18 @@ export interface PublicVerdict {
 
 export const fetchVerdict = (slug: string) => api<PublicVerdict>(`/v1/verdicts/${slug}`);
 
+export interface RecentVerdict {
+  share_slug: string;
+  kind: 'image' | 'video';
+  confidence: number;
+  verdict: 'authentic' | 'suspect' | 'synthetic';
+  original_name: string | null;
+  created_at: number;
+}
+
+export const fetchRecentVerdicts = () =>
+  api<{ verdicts: RecentVerdict[] }>('/v1/verdicts/recent').then((r) => r.verdicts);
+
 export const verdictMediaUrl = (slug: string) => `${API_BASE}/v1/verdicts/${slug}/image`;
 
 /** Toggle public-share flag for an owner-only analysis. Returns the share URL. */
