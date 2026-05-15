@@ -29,6 +29,12 @@ export interface Env {
   /** Email address to send alerts to (uses Resend). When set + RESEND_API_KEY
    *  configured, alerts are emailed in addition to (or instead of) any webhook. */
   ALERT_EMAIL?: string;
+
+  /** Google OAuth (optional). Falls back to magic-link only when unset. */
+  GOOGLE_CLIENT_ID?: string;
+  GOOGLE_CLIENT_SECRET?: string;
+  /** Defaults to {API_HOST}/v1/auth/google/callback if unset. */
+  GOOGLE_REDIRECT_URI?: string;
 }
 
 export type Tier = 'free' | 'pro' | 'max';

@@ -119,8 +119,22 @@ function SignInModal({ onClose, onSent }: { onClose: () => void; onSent: () => v
                 Enter the Forge
               </h2>
               <p className="mt-1 text-sm text-white/55">
-                We'll email you a magic sign-in link. No password.
+                Continue with Google, or get a magic sign-in link by email.
               </p>
+            </div>
+            <a
+              href={(import.meta.env.VITE_FORGE_API_URL as string | undefined) ? `${import.meta.env.VITE_FORGE_API_URL}/v1/auth/google/start` : 'https://api.mythos0x.com/v1/auth/google/start'}
+              className="flex items-center justify-center gap-2 rounded-xl bg-white px-4 py-3 font-display text-sm font-medium text-neutral-900 transition hover:brightness-95"
+            >
+              <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+                <path fill="#EA4335" d="M12 10.2v3.9h5.5c-.24 1.4-1.7 4.1-5.5 4.1-3.3 0-6-2.7-6-6.1s2.7-6.1 6-6.1c1.9 0 3.2.8 3.9 1.5l2.7-2.6C16.9 3.4 14.7 2.4 12 2.4 6.7 2.4 2.4 6.7 2.4 12s4.3 9.6 9.6 9.6c5.5 0 9.2-3.9 9.2-9.4 0-.6-.07-1.1-.16-1.6H12z"/>
+              </svg>
+              Continue with Google
+            </a>
+            <div className="flex items-center gap-3 text-[10px] uppercase tracking-[0.28em] text-white/30">
+              <span className="h-px flex-1 bg-white/10" />
+              <span>or</span>
+              <span className="h-px flex-1 bg-white/10" />
             </div>
             <input
               type="email"

@@ -324,6 +324,10 @@ export default {
         return await sendMagicLink(req, env, cors);
       if (url.pathname === '/v1/auth/verify' && req.method === 'GET')
         return await verifyMagicLink(req, env, url);
+      if (url.pathname === '/v1/auth/google/start' && req.method === 'GET')
+        return await googleStart(req, env);
+      if (url.pathname === '/v1/auth/google/callback' && req.method === 'GET')
+        return await googleCallback(req, env);
       if (url.pathname === '/v1/auth/logout' && req.method === 'POST')
         return await logout(req, env, cors);
 
@@ -1355,4 +1359,85 @@ function json(body: unknown, cors: HeadersInit, status = 200): Response {
     status,
     headers: { 'content-type': 'application/json', ...cors },
   });
+}
+
+// -- Google OAuth ------------------------------------------------------------
+
+function googleRedirectUri(env: Env): string {
+  return env.GOOGLE_REDIRECT_URI || 'https://api.mythos0x.com/v1/auth/google/callback';
+}
+
+async function googleStart(_req: Request, env: Env): Promise<Response> {
+  if (!env.GOOGLE_CLIENT_ID) {
+    return Response.redirect(`${env.SITE_URL}/?auth=google_disabled`, 302);
+  }
+  const state = randomToken(16);
+  const params = new URLSearchParams({
+    client_id: env.GOOGLE_CLIENT_ID,
+    redirect_uri: googleRedirectUri(env),
+    response_type: 'code',
+    scope: 'openid email profile',
+    access_type: 'online',
+    state,
+    prompt: 'select_account',
+  });
+  return new Response(null, {
+    status: 302,
+    headers: {
+      Location: 'https://accounts.google.com/o/oauth2/v2/auth?' + params.toString(),
+      'set-cookie': `gst=${state}; Max-Age=300; Path=/; Secure; HttpOnly; SameSite=Lax; Domain=.mythos0x.com`,
+    },
+  });
+}
+
+async function googleCallback(req: Request, env: Env): Promise<Response> {
+  if (!env.GOOGLE_CLIENT_ID || !env.GOOGLE_CLIENT_SECRET) {
+    return Response.redirect(`${env.SITE_URL}/?auth=google_disabled`, 302);
+  }
+  const url = new URL(req.url);
+  const code = url.searchParams.get('code');
+  const state = url.searchParams.get('state');
+  const cookieHeader = req.headers.get('cookie') || '';
+  const m = cookieHeader.match(/(?:^|; )gst=([^;]+)/);
+  const cookieState = m ? m[1] : null;
+  if (!code) return Response.redirect(`${env.SITE_URL}/?auth=missing_code`, 302);
+  if (!state || !cookieState || state !== cookieState) {
+    return Response.redirect(`${env.SITE_URL}/?auth=bad_state`, 302);
+  }
+
+  // Exchange code → access_token
+  const tokenRes = await fetch('https://oauth2.googleapis.com/token', {
+    method: 'POST',
+    headers: { 'content-type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({
+      code,
+      client_id: env.GOOGLE_CLIENT_ID,
+      client_secret: env.GOOGLE_CLIENT_SECRET,
+      redirect_uri: googleRedirectUri(env),
+      grant_type: 'authorization_code',
+    }),
+  });
+  if (!tokenRes.ok) return Response.redirect(`${env.SITE_URL}/?auth=token_failed`, 302);
+  const tok = (await tokenRes.json()) as { access_token?: string };
+  if (!tok.access_token) return Response.redirect(`${env.SITE_URL}/?auth=no_token`, 302);
+
+  // Fetch userinfo
+  const uiRes = await fetch('https://www.googleapis.com/oauth2/v2/userinfo', {
+    headers: { Authorization: `Bearer ${tok.access_token}` },
+  });
+  if (!uiRes.ok) return Response.redirect(`${env.SITE_URL}/?auth=userinfo_failed`, 302);
+  const ui = (await uiRes.json()) as { email?: string; verified_email?: boolean };
+  const email = (ui.email || '').toLowerCase().trim();
+  if (!email) return Response.redirect(`${env.SITE_URL}/?auth=no_email`, 302);
+
+  // Upsert user (same path as magic-link verify)
+  const user = await upsertUserByEmail(env, email);
+  const session = await createSession(env, user.id);
+
+  // Clear state cookie + set session cookie + redirect home
+  const h = new Headers();
+  h.append('Set-Cookie', `gst=; Max-Age=0; Path=/; Secure; HttpOnly; SameSite=Lax; Domain=.mythos0x.com`);
+  h.append('Set-Cookie', setSessionCookieHeader(session));
+  h.set('Location', `${env.SITE_URL}/?auth=ok`);
+  return new Response(null, { status: 302, headers: h });
 }
